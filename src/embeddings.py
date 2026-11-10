@@ -1,7 +1,13 @@
 import os
+import sys
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 # Silenciar advertencias informativas no críticas de Hugging Face Hub
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
