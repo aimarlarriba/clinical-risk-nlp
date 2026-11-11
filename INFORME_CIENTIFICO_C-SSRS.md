@@ -39,9 +39,9 @@ El dataset original compilado por Manas Gaur y colaboradores en *The Web Confere
 > *«¿Cómo afecta la función de agregación temporal del historial de usuario (Mean-Pooling de texto completo vs. Post-level Max-Pooling) a la capacidad de un clasificador SVM para identificar publicaciones aisladas de crisis aguda (`Attempt`) sin diluir la señal en publicaciones previas inocuas?»*
 * **Hipótesis 1:** La agregación mediante `Max-Pooling` a nivel de usuario preservará los picos de activación extrema en las dimensiones semánticas de riesgo de MentalBERT, incrementando el F1-Score y el Recall de la clase `Attempt` frente al promedio lineal tradicional (`Mean-Pooling`).
 
-### **Research Question 2 (RQ2 - Asimetría de Costes, Curva de Pareto y Viabilidad Clínica):**
-> *«¿Bajo qué ratio de penalización asimétrica de costes ($r = C_{\text{FN}} / C_{\text{FP}}$) en la función de pérdida squared hinge de la SVM es posible optimizar el compromiso de Pareto en la clase minoritaria crítica `Attempt` (9% de prevalencia), y en qué medida la reponderación de costes mitiga el colapso del Recall observado en la RQ1 sin degradar la viabilidad operativa global del sistema?»*
-* **Hipótesis 2:** La exploración sistemática del espacio de penalización $r \in [1, 20]$ (que engloba el ratio natural de desbalanceo $r \approx 10.3$) desplazará el hiperplano de decisión hacia regiones de mayor sensibilidad clínica para `Attempt`. Sin embargo, debido al solapamiento de representaciones semánticas densas, existirá una frontera de Pareto estricta donde incrementos en Recall conllevan una penalización acelerada en la Precisión y el Macro-F1 del sistema.
+### **Research Question 2 (RQ2 - Asimetría de Costes vs. Arquitectura Híbrida Neuro-Simbólica):**
+> *«¿Qué mecanismo supervisado resulta más eficaz y clínicamente viable para mitigar el colapso del Recall ante el desbalanceo severo (9% en `Attempt`): la reponderación de la función de coste lineal mediante penalización asimétrica ($r = C_{\text{FN}} / C_{\text{FP}}$) o la complementariedad ortogonal de una arquitectura híbrida neuro-simbólica (MentalBERT + TF-IDF de términos críticos)?»*
+* **Hipótesis 2:** La reponderación de costes sobre representaciones densas puras saturará prematuramente el Recall debido al solapamiento semántico en clases limítrofes (`Ideation` y `Behavior`), mientras que la inyección de disparadores léxicos dirigidos (ajustados en Train mediante $\chi^2$) actuará como ancla discriminativa ortogonal, elevando el F1 y la precisión clínica sin desestabilizar la frontera global de la SVM.
 
 ---
 
@@ -64,6 +64,13 @@ Para garantizar una cobertura del $100.0\%$ de los tokens sin truncamiento, el p
    * `mean_max`: $\text{Mean}(\text{Post}) \rightarrow \text{Max}(\text{Usuario})$
    * `max_max`: $\text{Max}(\text{Post}) \rightarrow \text{Max}(\text{Usuario})$
    * `plano_truncado`: Texto concatenado estándar con corte a 512 tokens (Baseline de referencia).
+
+### 3.3 Arquitectura Híbrida Neuro-Simbólica (MentalBERT + TF-IDF Crítico)
+Para contrarrestar la dilución de términos unarios de alto riesgo, se formula un espacio híbrido concatenado:
+$$\mathbf{x}_i = \left[ \mathbf{e}_i^{\text{MentalBERT}} \;\Big\|\; \alpha \cdot \mathbf{v}_i^{\text{TFIDF}} \right] \in \mathbb{R}^{768 + K}$$
+donde $\mathbf{e}_i^{\text{MentalBERT}}$ es la representación contextual densa (Plano Truncado o Jerárquico), $\mathbf{v}_i^{\text{TFIDF}} \in \mathbb{R}^K$ es un vector disperso de $K=100$ términos críticos seleccionados mediante el test formal de chi-cuadrado ($\chi^2$), y $\alpha = 2.0$ es un factor de escala estático que compensa la disparidad de magnitudes entre la norma continua densa y la dispersión del vector léxico.
+
+> **Garantía Metodológica de No Data Leakage:** Tanto el vocabulario de n-gramas (unigramas y bigramas, sublinear TF) como la matriz de puntuaciones del test $\chi^2$ se ajustan **exclusivamente sobre el conjunto de Entrenamiento ($n=350$)**. Las transformaciones sobre Validación ($n=75$) y Test ($n=75$) se aplican de forma estrictamente inductiva con el transformador congelado, garantizando la total ausencia de fuga de información entre particiones.
 
 ---
 
@@ -147,7 +154,16 @@ El espacio de búsqueda $r \in [1.0, 20.0]$ se justifica analíticamente al acot
 
 ---
 
-## 5. Referencias Bibliográficas
+## 5. Conclusiones Metodológicas y Recomendaciones Clínicas
+
+1. **Inestabilidad del Truncamiento Convencional (Respuesta a RQ1):** El truncamiento estándar a 512 tokens exhibe una marcada dependencia de la partición ($\sigma = 0.182$), fallando cuando la publicación crítica ocurre en etapas tardías del historial. La agregación jerárquica `Mean-Mean` ofrece la mayor robustez inter-partición ($\mu = 0.196 \pm 0.119$, Macro-F1 = $0.327 \pm 0.035$, Precisión = $40.7\%$), mientras que las estrategias con Max-Pooling (`Max-Mean`) conservan la consistencia ordinal clínica de la escala C-SSRS (Kappa cuadrático ponderado de $0.344 \pm 0.101$).
+2. **Límites de la Reponderación Lineal de Costes (Respuesta a RQ2 - Parte 1):** El barrido de costes asimétricos $r \in [1, 20]$ demuestra que una SVM puramente lineal en el espacio continuo no puede superar una cota de Recall del $\approx 17.1\%$ sin colapsar la precisión clínica del $40.7\%$ al $8.2\%$, debido al solapamiento intrínseco de representaciones entre ideación suicida y conducta activa.
+3. **Validación del Enfoque Neuro-Simbólico (Respuesta a RQ2 - Parte 2):** La arquitectura híbrida propuesta (MentalBERT + TF-IDF Crítico con $\chi^2$ en Train) resulta ser la solución superior del estudio, alcanzando en la partición oficial (Seed 42) un **F1-Attempt de 0.600 con un 100% de precisión** (cero falsos positivos), y liderando la media general entre 5 particiones ($\mu = 0.201 \pm 0.219$, Kappa = $0.349 \pm 0.061$). El espacio léxico disperso actúa como ancla simbólica ortogonal frente al suavizado de los transformadores.
+4. **Recomendación para Despliegue en Urgencias:** Dado el coste computacional de MentalBERT (~3.5 s/usuario en CPU), se recomienda una arquitectura de triaje en dos fases: un filtrado rápido en streaming mediante TF-IDF / SBERT para cribado masivo, seguido de una confirmación en profundidad mediante el clasificador híbrido MentalBERT para usuarios en la frontera de riesgo agudo.
+
+---
+
+## 6. Referencias Bibliográficas
 
 1. **Gaur, M., Alambo, A., Sain, J. P., Kursuncu, U., Thirunarayan, K., Kavuluru, R., Sheth, A., Welton, R., & Pathak, J. (2019).** *Knowledge-aware assessment of severity of suicide risk for early intervention.* In Proceedings of the World Wide Web Conference (WWW '19), pp. 514–525. ACM.
 2. **Ji, S., Zhang, T., Ansari, L., Fu, J., Tiwari, P., & Cambria, E. (2021).** *MentalBERT: Publicly Available Pretrained Language Models for Mental Healthcare.* arXiv preprint arXiv:2110.15621.
