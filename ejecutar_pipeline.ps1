@@ -1,14 +1,15 @@
-# ==============================================================================
+﻿# ==============================================================================
 # Script de ejecución de pipeline para Windows PowerShell
+# Tarea: Clasificación Supervisada de Texto (Corpus Reddit C-SSRS, N=500)
 # ==============================================================================
 param (
-    [string]$step = "all",
-    [int]$n_muestras = 500,
-    [switch]$test
+    [switch]$baseline,
+    [switch]$rq1,
+    [switch]$rq2
 )
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host " text-clustering-MD: Ejecutor de Pipeline PowerShell" -ForegroundColor Cyan
+Write-Host " text-classification-MD: Ejecutor de Pipeline PowerShell" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
 $pythonCmd = "python"
@@ -20,13 +21,12 @@ if (-not (Get-Command $pythonCmd -ErrorAction SilentlyContinue)) {
     }
 }
 
-if ($test) {
-    Write-Host "[INFO] Ejecutando suite de tests unitarios..." -ForegroundColor Yellow
-    & $pythonCmd main.py --test
-} else {
-    Write-Host "[INFO] Ejecutando pipeline (paso: $step, muestras: $n_muestras)..." -ForegroundColor Yellow
-    & $pythonCmd main.py --step $step --n_muestras $n_muestras
-}
+$argsList = @()
+if ($baseline) { $argsList += "--baseline" }
+if ($rq1) { $argsList += "--rq1" }
+if ($rq2) { $argsList += "--rq2" }
+
+& $pythonCmd main.py @argsList
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`n[EXITO] Ejecucion finalizada correctamente." -ForegroundColor Green

@@ -1,8 +1,9 @@
 @echo off
 REM ==============================================================================
 REM  Script de ejecución de pipeline para Windows (CMD / Batch)
+REM  Tarea: Clasificación Supervisada de Texto (Corpus Reddit C-SSRS, N=500)
 REM ==============================================================================
-echo [INFO] Iniciando pipeline de Text Clustering...
+echo [INFO] Iniciando pipeline de Clasificacion Supervisada...
 
 where python >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (

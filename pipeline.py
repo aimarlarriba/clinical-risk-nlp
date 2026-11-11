@@ -1,17 +1,12 @@
 """
-Descripción:
-    Pipeline integral que carga el corpus clínico de Reddit (Zenodo C-SSRS),
-    genera representaciones densas contextuales mediante Sentence-BERT (all-MiniLM-L6-v2),
-    calcula las matrices de distancias Coseno y Euclídea desde cero (Scratch en NumPy),
-    evalúa formalmente el contraste métrico (Aggarwal et al., 2001) y perfila el coste computacional.
+pipeline.py: Funciones centrales del pipeline de clasificación supervisada.
+Proporciona utilidades para la carga, preprocesamiento de textos y extracción de features
+para el corpus clínico de Reddit (C-SSRS, N=500 usuarios).
 """
 
 import os
 import sys
-import time
-import json
-import argparse
-from typing import Tuple, List, Any
+from typing import Tuple, List, Any, Dict
 import numpy as np
 import pandas as pd
 
@@ -20,267 +15,38 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-try:
-    from src.config import (
-        RAW_DATA_FILE,
-        PROCESSED_DATA_DIR,
-        DEFAULT_MODEL_NAME,
-        DEFAULT_N_SAMPLES,
-        CLASS_MAP,
-    )
-except (ImportError, ModuleNotFoundError):
-    RAW_DATA_FILE = "data/500_Reddit_users_posts_labels.csv"
-    PROCESSED_DATA_DIR = "data_processed"
-    DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"
-    DEFAULT_N_SAMPLES = 500
-    CLASS_MAP = {
-        "indicator": 0,
-        "ideation": 1,
-        "behavior": 2,
-        "attempt": 3,
-        "supportive": 4,
-    }
-
-from src.embeddings import (
-    generar_embeddings,
-    guardar_embeddings,
-    calcular_matriz_distancias_scratch,
-    guardar_matriz_distancias,
-    comparar_espacios_metricos,
-    perfilar_coste_computacional,
+from src.modulo_comun_equipo import (
+    cargar_particion_oficial_equipo,
+    limpiar_texto_reddit,
+    RUTA_CSV_DEFECTO,
+    RANDOM_SEED
 )
 
 
-
-def limpiar_texto_post(post_raw: Any) -> str:
+def cargar_datos_clasificacion(
+    ruta_csv: str = RUTA_CSV_DEFECTO,
+    seed: int = RANDOM_SEED
+) -> Dict[str, Any]:
     """
-    Extrae y unifica las publicaciones textuales de un usuario en un único string limpio.
-    En el corpus de Zenodo, los posts múltiples se almacenan como una lista serializada en texto.
-
-    Pre-condiciones:
-        - post_raw: objeto convertible a string o representación literal de lista con los textos del post.
-
-    Post-condiciones:
-        - Devuelve un string no vacío con el contenido textual concatenado y normalizado.
+    Carga y particiona el corpus oficial en 70% Train, 15% Dev y 15% Test.
+    Precondiciones:
+        - Existe el archivo CSV en 'ruta_csv'.
+    Postcondiciones:
+        - Devuelve diccionario con textos, etiquetas y embeddings divididos limpiamente.
     """
-    import ast
-    if isinstance(post_raw, str) and post_raw.strip().startswith("["):
-        try:
-            posts = ast.literal_eval(post_raw)
-            if isinstance(posts, list):
-                return " ".join([str(p).strip() for p in posts if p])
-        except Exception:
-            pass
-    return str(post_raw).strip()
+    return cargar_particion_oficial_equipo(ruta_csv=ruta_csv, seed=seed)
 
 
-def cargar_datos(ruta_csv: str = "data/500_Reddit_users_posts_labels.csv", n_muestras: int = 500) -> Tuple[List[str], np.ndarray]:
-    """
-    Carga el dataset clínico real de Zenodo (500_Reddit_users_posts_labels.csv).
-
-    Pre-condiciones:
-        - ruta_csv: ruta al archivo CSV existente con los datos reales.
-        - n_muestras: número máximo de usuarios a procesar (por defecto 500).
-
-    Post-condiciones:
-        - Devuelve una tupla (textos, etiquetas) donde textos es una lista de strings
-          y etiquetas es un array NumPy con las clases de riesgo C-SSRS [0..4].
-    """
-    if not os.path.exists(ruta_csv):
-        print(f"\n[AVISO] No se encontró el dataset en '{ruta_csv}'.")
-        print("Asegúrate de colocar '500_Reddit_users_posts_labels.csv' dentro de la carpeta 'data/'.")
-        return [], np.array([], dtype=int)
-
-    mapa_clases = {
-        "indicator": 0,
-        "ideation": 1,
-        "behavior": 2,
-        "attempt": 3,
-        "supportive": 4
-    }
-
-    print(f"Cargando dataset real desde {ruta_csv}...")
+def resumen_estadistico_corpus(ruta_csv: str = RUTA_CSV_DEFECTO) -> pd.DataFrame:
+    """Calcula y devuelve el conteo y distribución de prevalencia de clases C-SSRS."""
     df = pd.read_csv(ruta_csv)
-
-    # Identificar columna de texto ('Post' en Zenodo)
-    col_texto = None
-    for c in df.columns:
-        if c.lower() in ["post", "text", "body", "cleaned_text"]:
-            col_texto = c
-            break
-    if not col_texto:
-        col_texto = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-
-    # Identificar columna de etiqueta ('Label' en Zenodo)
-    col_label = None
-    for c in df.columns:
-        if c.lower() in ["label", "class", "risk_level", "risk"]:
-            col_label = c
-            break
-
-    df_sub = df.head(n_muestras)
-    textos = [limpiar_texto_post(p) for p in df_sub[col_texto]]
-
-    if col_label:
-        etiquetas_str = df_sub[col_label].astype(str).str.strip().str.lower()
-        etiquetas = np.array([mapa_clases.get(lbl, 0) for lbl in etiquetas_str], dtype=int)
-        distribucion = df_sub[col_label].value_counts().to_dict()
-
-        duplicados = df_sub.duplicated(subset=[col_texto]).sum()
-        missing = df_sub[col_texto].isna().sum()
-
-        # métricas cuantitativas
-        longitudes = [len(str(t).split()) for t in textos]
-        rango_min, rango_med, rango_max = np.min(longitudes), np.median(longitudes), np.max(longitudes)
-
-        vocabulario = set(" ".join(textos).lower().split())
-        palabras_oov = sum(1 for w in vocabulario if not w.isalpha())
-        tasa_oov = (palabras_oov / len(vocabulario) * 100) if len(vocabulario) > 0 else 0.0
-
-        print(f"Posts cargados: {len(textos)} | Distribución de clases: {distribucion}")
-        print(f"Duplicados: {duplicados} | Missing values: {missing} | Talla vocabulario: {len(vocabulario)}")
-        print(f"Rango de palabras por post -> Mín: {rango_min}, Mediana: {rango_med:.1f}, Máx: {rango_max}")
-        print(f"Tasa de palabras fuera de vocabulario (OOV): {tasa_oov:.2f}%")
-    else:
-        etiquetas = np.zeros(len(textos), dtype=int)
-
-    return textos, etiquetas
-
-
-def main():
-    """
-    Punto de entrada para el pipeline de extracción de embeddings y matrices de proximidad.
-
-    Pre-condiciones:
-        - Archivo CSV con posts clínicos accesible en ruta indicada o por defecto data/.
-        - Paquetes de sentence-transformers y numpy disponibles.
-    Post-condiciones:
-        - Genera y serializa embeddings densos y matrices de distancias en la carpeta data_processed/.
-        - Si se activa --infer o --texto, ejecuta la asignación al cluster y búsqueda de vecinos más cercanos.
-    """
-    parser = argparse.ArgumentParser(description="Pipeline de embeddings y matrices de proximidad")
-    parser.add_argument(
-        "--csv",
-        type=str,
-        default="data/500_Reddit_users_posts_labels.csv",
-        help="Ruta al CSV con los posts reales de Zenodo"
-    )
-    parser.add_argument("--n_muestras", type=int, default=500, help="Número de posts a procesar")
-    parser.add_argument("--modelo", type=str, default="all-MiniLM-L6-v2", help="Modelo de SBERT")
-    parser.add_argument("--salida", type=str, default="data_processed", help="Carpeta de salida")
-    parser.add_argument("--texto", type=str, default=None, help="Introduce un texto en inglés para evaluar su riesgo.")
-    parser.add_argument(
-        "--infer",
-        type=str,
-        nargs="?",
-        const="DEFAULT",
-        default=None,
-        help="Activa el modo de inferencia o especifica directamente el texto a inferir (compatible con main.py)."
-    )
-    args = parser.parse_args()
-
-    if args.texto or args.infer is not None:
-        if args.texto:
-            texto_evaluar = args.texto
-        elif args.infer != "DEFAULT":
-            texto_evaluar = args.infer
-        else:
-            texto_evaluar = "I feel so overwhelmed and I don't know what to do."
-
-        print(f"\n[MODO INFERENCIA] Procesando nuevo texto: '{texto_evaluar}'")
-
-        from src.evaluacion import inferir_y_mostrar_cercanos
-
-        try:
-            X_train = np.load(os.path.join(args.salida, "embeddings_sbert.npy"))
-            # se cargan los clústeres inferidos, no el ground truth clínico
-            pred_file = os.path.join(args.salida, "etiquetas_predichas.npy")
-            if os.path.exists(pred_file):
-                y_train = np.load(pred_file)
-            else:
-                dist_file = os.path.join(args.salida, "matriz_distancias_cosine.npy")
-                D_cos = np.load(dist_file)
-                from src.clustering.hierarchical import MotorJerarquico
-                from src.metricas_internas import cortar_dendrograma_scratch
-                Z = MotorJerarquico(tipo_enlace="complete").fit(D_cos)
-                y_train = cortar_dendrograma_scratch(Z, n_clusters=15)
-                np.save(pred_file, y_train)
-
-            with open(os.path.join(args.salida, "textos_posts.json"), "r", encoding="utf-8") as f:
-                textos_train = json.load(f)
-        except FileNotFoundError:
-            print("Error: Datos base no encontrados. Ejecuta pipeline.py primero.")
-            return
-
-        vector_nuevo = generar_embeddings([texto_evaluar], nombre_modelo=args.modelo, normalizar=True)[0]
-        inferir_y_mostrar_cercanos(vector_nuevo, X_train, y_train, textos_train, k=3)
-        return
-
-    os.makedirs(args.salida, exist_ok=True)
-
-    print("=== Pipeline de Embeddings y Matrices de Proximidad ===")
-
-    # Cargar textos
-    textos, etiquetas_reales = cargar_datos(args.csv, args.n_muestras)
-    N = len(textos)
-    if N == 0:
-        print("[ERROR] No hay textos para procesar. Revisa la ruta del dataset. Abortando.")
-        return
-    print(f"Total de posts a procesar: {N}")
-
-    # Generar embeddings
-    print(f"Generando embeddings con {args.modelo}...")
-    t0 = time.time()
-    X = generar_embeddings(textos, nombre_modelo=args.modelo, normalizar=True)
-    t_emb = time.time() - t0
-    print(f"Embeddings listos en {t_emb:.2f}s (forma: {X.shape})")
-
-    # Calcular matrices de proximidad scratch en NumPy
-    print("Calculando matrices de distancia en scratch...")
-    t0 = time.time()
-    D_cos = calcular_matriz_distancias_scratch(X, metrica="cosine")
-    t_cos = time.time() - t0
-
-    t0 = time.time()
-    D_euc = calcular_matriz_distancias_scratch(X, metrica="euclidean")
-    t_euc = time.time() - t0
-
-    print(f"Matriz Coseno calculada en {t_cos:.4f}s")
-    print(f"Matriz Euclídea calculada en {t_euc:.4f}s")
-
-    # Comparativa de distancias
-    print("Generando comparativa estadística de métricas...")
-    ruta_grafico = os.path.join(args.salida, "comparativa_distancias.png")
-    stats = comparar_espacios_metricos(X, D_cos, D_euc, ruta_grafico=ruta_grafico)
-    print(f"Media Coseno: {stats['cos_media']:.4f} (std: {stats['cos_std']:.4f}) | Contraste: {stats['cos_contraste_relativo']:.2f}")
-    print(f"Media Euclídea: {stats['euc_media']:.4f} (std: {stats['euc_std']:.4f}) | Contraste: {stats['euc_contraste_relativo']:.2f}")
-    print(f"Correlación Pearson: {stats['corr_pearson']:.4f}")
-    print(f"Verificación formal d_E = sqrt(2*d_cos) -> Error máx: {stats['error_formal_max_euc_sqrt2cos']:.2e}")
-
-    # Profiling cuantitativo de tiempo y memoria (O(N^2))
-    print("Ejecutando profiling empírico de complejidad temporal y memoria...")
-    profiling = perfilar_coste_computacional(X, lista_n=(100, 200, 300, 400, 500))
-
-    # Guardar métricas cuantitativas
-    informe_cuantitativo = {
-        "estadisticas_espacios_metricos": stats,
-        "profiling_complejidad_computacional": profiling
-    }
-    with open(os.path.join(args.salida, "metricas_espacios_y_profiling.json"), "w", encoding="utf-8") as f:
-        json.dump(informe_cuantitativo, f, ensure_ascii=False, indent=2)
-
-    # Guardar archivos serializados para las fases de clustering y evaluación
-    print("Guardando archivos serializados...")
-    guardar_embeddings(X, os.path.join(args.salida, "embeddings_sbert.npy"))
-    guardar_matriz_distancias(D_cos, os.path.join(args.salida, "matriz_distancias_cosine.npy"))
-    guardar_matriz_distancias(D_euc, os.path.join(args.salida, "matriz_distancias_euclidean.npy"))
-
-    np.save(os.path.join(args.salida, "etiquetas_reales.npy"), etiquetas_reales)
-    with open(os.path.join(args.salida, "textos_posts.json"), "w", encoding="utf-8") as f:
-        json.dump(textos, f, ensure_ascii=False, indent=2)
-
-    print("\nListo. Todos los ficheros generados correctamente en:", args.salida)
+    dist = df["Label"].value_counts().reset_index()
+    dist.columns = ["Clase C-SSRS", "Total Usuarios"]
+    dist["Prevalencia (%)"] = (dist["Total Usuarios"] / len(df)) * 100.0
+    return dist
 
 
 if __name__ == "__main__":
-    main()
+    print("[*] Resumen del corpus Reddit C-SSRS (N=500):")
+    df_dist = resumen_estadistico_corpus()
+    print(df_dist.to_string(index=False))

@@ -370,6 +370,7 @@ def ejecutar_experimento_rq2(
     ax.set_title("RQ2: Impacto del Enriquecimiento Neuro-Simbólico (MentalBERT + TF-IDF Crítico) en F1-Attempt", fontsize=11, fontweight="bold", pad=12)
     ax.set_ylabel("F1-Score en Clase Crítica 'Attempt' (μ)", fontsize=11, fontweight="bold")
     ax.set_xlabel("Arquitectura de Representación", fontsize=11, fontweight="bold")
+    ax.set_xticks(range(5))
     ax.set_xticklabels(["Plano (512)", "Mean-Mean", "Solo TF-IDF", "Híbrido Oficial", "Híbrido Robusto"], fontsize=9.5, fontweight="bold")
     ax.set_ylim(0.0, 0.40)
     ax.legend(title="Configuración de Costes", title_fontsize=10, loc="upper right")
