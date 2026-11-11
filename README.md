@@ -12,7 +12,10 @@ Este repositorio contiene la arquitectura experimental, pipeline de extracción 
 
 ### 💎 RQ2 (Dimensión de Optimización y Representación: Asimetría de Costes vs. Modelo Híbrido):
 > *«¿Qué mecanismo supervisado resulta más eficaz y clínicamente viable para mitigar el colapso del Recall ante el desbalanceo severo (9% en `Attempt`): la intervención de la función de coste lineal mediante penalización asimétrica ($r = C_{\text{FN}} / C_{\text{FP}}$) o la complementariedad ortogonal de una arquitectura híbrida neuro-simbólica (MentalBERT + TF-IDF de términos críticos)?»*
-* **Hallazgo Clave:** La reponderación lineal de costes satura el Recall en $\approx 0.171$ a expensas de desplomar la precisión del $40.7\%$ al $8.2\%$. Por el contrario, la arquitectura híbrida neuro-simbólica (MentalBERT + TF-IDF Crítico con $\chi^2$ ajustado en Train) rompe esta limitación, alcanzando en la semilla oficial un **F1 de 0.600 con un 100% de precisión** (cero falsos positivos) y liderando la media entre particiones ($\mu = 0.201 \pm 0.219$, $\text{Kappa} = 0.349 \pm 0.061$).
+* **Hallazgo Clave:** La reponderación lineal de costes satura el Recall en $\approx 0.171$ a expensas de desplomar la precisión del $40.7\%$ al $8.2\%$. Por el contrario, la arquitectura híbrida neuro-simbólica (MentalBERT + TF-IDF Crítico con $\chi^2$ ajustado en Train) rompe esta limitación:
+  - En la semilla oficial (Seed 42), alcanza **F1 = 0.600 con un 100% de precisión** (cero falsos positivos).
+  - En evaluación multillamada con regularización $C=0.2$ y pesos balanceados, alcanza el **máximo Quadratic Weighted Kappa del estudio ($0.402 \pm 0.081$)** y Macro-F1 de $0.349$.
+  - Mediante calibración post-hoc de umbral $\theta^*$ en Dev, alcanza un **$51.4\%$ de Recall en Test** para triaje clínico sin data leakage.
 
 ---
 

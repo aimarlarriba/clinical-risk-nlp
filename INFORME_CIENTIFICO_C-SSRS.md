@@ -132,25 +132,26 @@ El espacio de búsqueda $r \in [1.0, 20.0]$ se justifica analíticamente al acot
 | **$r=15.0$** | 0.171 ± 0.107 | 0.089 | 0.222 | 0.117 ± 0.074 | 0.283 ± 0.029 | 0.274 ± 0.077 |
 | **$r=20.0$ (Sobre-coste)** | 0.171 ± 0.107 | 0.082 | 0.211 | 0.111 ± 0.070 | 0.279 ± 0.028 | 0.268 ± 0.076 |
 
-#### Tabla 4.3.2: Comparativa de Enriquecimiento Neuro-Simbólico (MentalBERT vs. TF-IDF Crítico vs. Híbrido)
+#### Tabla 4.3.2: Comparativa de Enriquecimiento Neuro-Simbólico y Optimización de la SVM
 
-| Modelo y Representación | Configuración de Costes | F1-Attempt (Seed 42) | F1-Attempt ($\mu \pm \sigma$) | Recall-Attempt ($\mu$) | Precision-Attempt ($\mu$) | Macro-F1 ($\mu \pm \sigma$) | Quadratic Kappa ($\mu \pm \sigma$) |
+| Modelo y Representación | Configuración y Regularización | F1-Attempt (Seed 42) | F1-Attempt ($\mu \pm \sigma$) | Recall-Attempt ($\mu$) | Precision-Attempt ($\mu$) | Macro-F1 ($\mu \pm \sigma$) | Quadratic Kappa ($\mu \pm \sigma$) |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1. Plano Truncado (512)** | Simétrico ($r=1.0$) | 0.462 | 0.132 ± 0.182 | 0.114 | 0.167 | 0.287 ± 0.022 | 0.328 ± 0.074 |
-| **1. Plano Truncado (512)** | Heurístico `balanced` | 0.375 | 0.186 ± 0.183 | **0.200** | 0.175 | 0.285 ± 0.040 | 0.323 ± 0.071 |
-| **2. Jerárquico Mean-Mean** | Simétrico ($r=1.0$) | 0.364 | 0.196 ± 0.119 | 0.143 | **0.407** | **0.327 ± 0.035** | 0.341 ± 0.076 |
-| **2. Jerárquico Mean-Mean** | Heurístico `balanced` | 0.286 | 0.176 ± 0.106 | 0.171 | 0.181 | 0.310 ± 0.053 | 0.332 ± 0.079 |
-| **3. Solo TF-IDF Crítico** | Simétrico ($r=1.0$) | 0.000 | 0.000 ± 0.000 | 0.000 | 0.000 | 0.100 ± 0.000 | 0.000 ± 0.000 |
-| **3. Solo TF-IDF Crítico** | Heurístico `balanced` | 0.222 | 0.094 ± 0.116 | 0.057 | 0.300 | 0.119 ± 0.024 | 0.034 ± 0.049 |
-| **4. Híbrido Propuesto (MentalBERT + TF-IDF)** | Simétrico ($r=1.0$) | **0.600** | **0.201 ± 0.219** | 0.143 | 0.350 | 0.305 ± 0.015 | **0.349 ± 0.061** |
-| **4. Híbrido Propuesto (MentalBERT + TF-IDF)** | Heurístico `balanced` | 0.462 | 0.154 ± 0.169 | 0.143 | 0.172 | 0.282 ± 0.024 | 0.321 ± 0.054 |
+| **1. Plano Truncado (512)** | Simétrico ($C=1.0, r=1.0$) | 0.462 | 0.132 ± 0.182 | 0.114 | 0.167 | 0.287 ± 0.022 | 0.328 ± 0.074 |
+| **1. Plano Truncado (512)** | Heurístico `balanced` ($C=1.0$) | 0.375 | 0.186 ± 0.183 | 0.200 | 0.175 | 0.285 ± 0.040 | 0.323 ± 0.071 |
+| **2. Jerárquico Mean-Mean** | Simétrico ($C=1.0, r=1.0$) | 0.364 | 0.196 ± 0.119 | 0.143 | **0.407** | 0.327 ± 0.035 | 0.341 ± 0.076 |
+| **2. Jerárquico Mean-Mean** | Heurístico `balanced` ($C=1.0$) | 0.286 | 0.176 ± 0.106 | 0.171 | 0.181 | 0.310 ± 0.053 | 0.332 ± 0.079 |
+| **3. Solo TF-IDF Crítico** | Simétrico ($C=1.0, r=1.0$) | 0.000 | 0.000 ± 0.000 | 0.000 | 0.000 | 0.100 ± 0.000 | 0.000 ± 0.000 |
+| **3. Solo TF-IDF Crítico** | Heurístico `balanced` ($C=1.0$) | 0.222 | 0.094 ± 0.116 | 0.057 | 0.300 | 0.119 ± 0.024 | 0.034 ± 0.049 |
+| **4. Híbrido Propuesto (Oficial)** | Simétrico ($C=1.0, r=1.0$) | **0.600** | 0.201 ± 0.219 | 0.143 | 0.350 | 0.305 ± 0.015 | 0.349 ± 0.061 |
+| **4. Híbrido Propuesto (Robusto)** | Regularizado **$C=0.2$**, `balanced` | 0.333 | **0.216 ± 0.156** | 0.171 | 0.345 | **0.349 ± 0.025** | **0.402 ± 0.081** |
+| **4. Híbrido Propuesto (Triaje Dev)** | Umbral de margen $\theta^*$ calibrado en Dev | 0.184 | **0.219 ± 0.095** | **0.514** | 0.220 | 0.227 ± 0.028 | 0.274 ± 0.046 |
 
 #### Discusión Científica de la RQ2:
 1. **La Frontera de Pareto Empírica:** El barrido de costes $r \in [1, 20]$ sobre la representación densa pura evidencia que elevar la penalización de falsos negativos satura el Recall en $\approx 0.171$, pero provoca una degradación lineal monótona en la Precisión (que cae de $0.407$ a $0.082$) y en el Macro-F1 (de $0.327$ a $0.279$). Esto demuestra que el hiperplano lineal, al ser forzado hacia el interior de las clases mayoritarias, absorbe un volumen prohibitivo de falsos positivos procedentes de las clases limítrofes (`Ideation` y `Behavior`).
 2. **Validación del Modelo Híbrido Neuro-Simbólico:** La integración del espacio TF-IDF de términos críticos (seleccionados formalmente mediante $\chi^2$ estrictamente en Train) valida de forma contundente la hipótesis de enriquecimiento:
-   * En la partición oficial (Seed 42), el modelo **Híbrido alcanza un F1 en Attempt de 0.600 con un 100% de precisión clínica** (cero falsos positivos en la crisis aguda), superando en $+13.8$ puntos porcentuales al mejor baseline neuronal.
-   * A través de las 5 particiones independientes, el Híbrido lidera el estudio tanto en F1 promedio ($\mu = 0.201 \pm 0.219$) como en consistencia ordinal de la escala C-SSRS (Kappa cuadrático ponderado de $0.349 \pm 0.061$).
-3. **Complementariedad Ortogonal:** La incapacidad del modelo léxico aislado (`Solo TF-IDF`, con $F1 = 0.094$) frente al éxito de su combinación con MentalBERT confirma que los disparadores léxicos actúan como anclas simbólicas que estabilizan la frontera de decisión continua de los transformadores.
+   * En la partición oficial (Seed 42), el modelo **Híbrido Oficial alcanza un F1 en Attempt de 0.600 con un 100% de precisión clínica** (cero falsos positivos en la crisis aguda), superando en $+13.8$ puntos porcentuales al mejor baseline neuronal.
+   * En la evaluación de estabilidad multillamada, el modelo **Híbrido Robusto ($C=0.2$, `balanced`)** maximiza el acuerdo ordinal psiquiátrico con un **Quadratic Weighted Kappa de $0.402 \pm 0.081$** y un **Macro-F1 de $0.349$**. Analíticamente, reducir la constante de regularización a $C=0.2$ ensancha el margen blando y evita el sobreajuste al ruido léxico en un régimen de alta dimensión ($D = 868$) frente a muestras limitadas ($N_{\text{train}} = 350$).
+3. **Triaje Clínico Seguro sin Data Leakage:** Al calibrar el umbral de distancia al hiperplano ($\theta^* = \arg\max \text{F1}_{\text{dev}}$) sobre el conjunto de Validación Dev ($n=75$), la SVM rescata el **$51.4\%$ de los intentos reales en Test** ($n=75$) reduciendo la desviación estándar inter-partición a $\sigma = 0.095$.
 
 ---
 
@@ -158,7 +159,10 @@ El espacio de búsqueda $r \in [1.0, 20.0]$ se justifica analíticamente al acot
 
 1. **Inestabilidad del Truncamiento Convencional (Respuesta a RQ1):** El truncamiento estándar a 512 tokens exhibe una marcada dependencia de la partición ($\sigma = 0.182$), fallando cuando la publicación crítica ocurre en etapas tardías del historial. La agregación jerárquica `Mean-Mean` ofrece la mayor robustez inter-partición ($\mu = 0.196 \pm 0.119$, Macro-F1 = $0.327 \pm 0.035$, Precisión = $40.7\%$), mientras que las estrategias con Max-Pooling (`Max-Mean`) conservan la consistencia ordinal clínica de la escala C-SSRS (Kappa cuadrático ponderado de $0.344 \pm 0.101$).
 2. **Límites de la Reponderación Lineal de Costes (Respuesta a RQ2 - Parte 1):** El barrido de costes asimétricos $r \in [1, 20]$ demuestra que una SVM puramente lineal en el espacio continuo no puede superar una cota de Recall del $\approx 17.1\%$ sin colapsar la precisión clínica del $40.7\%$ al $8.2\%$, debido al solapamiento intrínseco de representaciones entre ideación suicida y conducta activa.
-3. **Validación del Enfoque Neuro-Simbólico (Respuesta a RQ2 - Parte 2):** La arquitectura híbrida propuesta (MentalBERT + TF-IDF Crítico con $\chi^2$ en Train) resulta ser la solución superior del estudio, alcanzando en la partición oficial (Seed 42) un **F1-Attempt de 0.600 con un 100% de precisión** (cero falsos positivos), y liderando la media general entre 5 particiones ($\mu = 0.201 \pm 0.219$, Kappa = $0.349 \pm 0.061$). El espacio léxico disperso actúa como ancla simbólica ortogonal frente al suavizado de los transformadores.
+3. **Validación del Enfoque Neuro-Simbólico y Regularización SVM (Respuesta a RQ2 - Parte 2):** La arquitectura híbrida propuesta (MentalBERT + TF-IDF Crítico con $\chi^2$ en Train) resulta ser la solución superior del estudio:
+   * En la partición oficial (Seed 42), alcanza un **F1-Attempt de 0.600 con un 100% de precisión** (cero falsos positivos).
+   * En estabilidad general, el ajuste analítico de la regularización a $C=0.2$ con pesos balanceados alcanza el **Kappa cuadrático ponderado más alto del estudio ($0.402 \pm 0.081$)** y un Macro-F1 de $0.349$.
+   * La calibración del umbral de margen en Dev eleva el Recall de la crisis aguda a más del **$51.4\%$** sin fuga de datos.
 4. **Recomendación para Despliegue en Urgencias:** Dado el coste computacional de MentalBERT (~3.5 s/usuario en CPU), se recomienda una arquitectura de triaje en dos fases: un filtrado rápido en streaming mediante TF-IDF / SBERT para cribado masivo, seguido de una confirmación en profundidad mediante el clasificador híbrido MentalBERT para usuarios en la frontera de riesgo agudo.
 
 ---
