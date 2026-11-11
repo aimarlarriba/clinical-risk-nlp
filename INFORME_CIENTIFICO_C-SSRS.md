@@ -73,17 +73,24 @@ Para garantizar una cobertura del $100.0\%$ de los tokens sin truncamiento, el p
 
 ### 4.1 Resultados de la RQ1: Impacto de la Agregación Temporal en Test
 
-| Estrategia de Agregación | F1-Attempt (Seed 42) | F1-Attempt ($\mu \pm \sigma$) | Recall-Attempt | Precision-Attempt | Macro-F1 ($\mu \pm \sigma$) | Quadratic Kappa ($\mu \pm \sigma$) |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1. Plano Truncado (512)** | **0.462** | **0.462 ± 0.000** | **0.429** | **0.500** | **0.300 ± 0.000** | 0.224 ± 0.000 |
-| **2. Jerárquico Mean-Mean** | 0.364 | 0.364 ± 0.000 | 0.286 | **0.500** | 0.281 ± 0.000 | 0.224 ± 0.000 |
-| **3. Jerárquico Max-Mean**  | 0.182 | 0.182 ± 0.000 | 0.143 | 0.250 | 0.249 ± 0.000 | 0.192 ± 0.000 |
-| **4. Jerárquico Mean-Max**  | 0.000 | 0.000 ± 0.000 | 0.000 | 0.000 | 0.204 ± 0.000 | 0.283 ± 0.000 |
-| **5. Jerárquico Max-Max**   | 0.286 | 0.286 ± 0.000 | 0.286 | 0.286 | 0.227 ± 0.000 | **0.369 ± 0.000** |
+Para evaluar la estabilidad de las representaciones factoriales frente a la varianza muestral, se reporta tanto el desempeño sobre la partición oficial estratificada acordada por el equipo (`random_state=42`) como la media y desviación estándar empírica ($\mu \pm \sigma$) obtenida a través de 5 particiones estratificadas independientes ($[42, 43, 44, 45, 46]$) manteniendo el corte 70/15/15 ($N=500$, Train=$350$, Dev=$75$, Test=$75$).
 
-#### Discusión Científica de la RQ1:
-1. **Compromiso Truncamiento vs. Dispersión:** La representación estándar `Plano Truncado (512 tokens)` alcanza el mayor F1 en la clase crítica `Attempt` (0.462) y mayor Macro-F1 (0.300) bajo una SVM lineal no ponderada. Esto se debe a que la crisis aguda suele manifestarse en los mensajes más recientes o al inicio del historial de Reddit.
-2. **Consistencia Ordinal (Kappa Cuadrático):** La estrategia `Max-Max` jerárquica obtiene el mayor Kappa de Cohen cuadrático (0.369 frente a 0.224 del plano), lo que demuestra que capturar valores extremos conserva mejor la coherencia de severidad ordinal clínica de la escala C-SSRS, aunque penaliza la frontera de decisión en SVM cuando no se aplica reponderación de costes (abordado en RQ2).
+El clasificador base empleado es una máquina de vectores de soporte lineal (`LinearSVC`) con formulación de margen blando y pérdida *squared hinge* penalizada mediante regularización $\ell_2$:
+$$\min_{\mathbf{w}, b} \frac{1}{2}\|\mathbf{w}\|_2^2 + C \sum_{i=1}^N \max(0, 1 - y_i(\mathbf{w}^T \mathbf{x}_i + b))^2$$
+fijando $C = 1.0$ como parámetro estándar de regularización previa a la calibración de costes de la RQ2.
+
+| Estrategia de Agregación | F1-Attempt (Seed 42) | F1-Attempt ($\mu \pm \sigma$) | Recall-Attempt ($\mu$) | Precision-Attempt ($\mu$) | Macro-F1 ($\mu \pm \sigma$) | Quadratic Kappa ($\mu \pm \sigma$) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **1. Plano Truncado (512)** | **0.462** | 0.132 ± 0.182 | 0.114 | 0.167 | 0.287 ± 0.022 | 0.328 ± 0.074 |
+| **2. Jerárquico Mean-Mean** | 0.364 | **0.196 ± 0.119** | **0.143** | **0.407** | **0.327 ± 0.035** | 0.341 ± 0.076 |
+| **3. Jerárquico Max-Mean**  | 0.182 | 0.109 ± 0.089 | 0.086 | 0.150 | 0.312 ± 0.041 | **0.344 ± 0.101** |
+| **4. Jerárquico Mean-Max**  | 0.000 | 0.076 ± 0.094 | 0.057 | 0.117 | 0.280 ± 0.042 | 0.304 ± 0.038 |
+| **5. Jerárquico Max-Max**   | 0.286 | 0.057 ± 0.114 | 0.057 | 0.057 | 0.252 ± 0.043 | 0.311 ± 0.110 |
+
+#### Discusión Metodológica de la RQ1:
+1. **Inestabilidad del Truncamiento Lineal:** Si bien la representación estándar `Plano Truncado (512 tokens)` alcanza el valor puntual más alto en la semilla oficial 42 ($F1 = 0.462$), el análisis multillamada evidencia una marcada sensibilidad a la partición ($\sigma = 0.182$, colapsando a $0.000$ en 3 de las 5 semillas). Esto corrobora empíricamente que truncar a 512 tokens descarta publicaciones críticas cuando el evento agudo se desplaza a fases intermedias o finales de historiales extensos.
+2. **Robustez de la Agregación Jerárquica:** La estrategia `Jerárquico Mean-Mean` exhibe la mayor estabilidad global inter-partición, liderando en Macro-F1 medio ($0.327 \pm 0.035$), F1 medio de la clase crítica ($0.196 \pm 0.119$) y Precisión clínica media ($0.407$). Asimismo, las variantes con Max-Pooling intra-post (`Max-Mean`) maximizan el Kappa cuadrático medio ($0.344 \pm 0.101$), preservando la gradación ordinal de severidad.
+3. **Evidencia de Colapso por Desbalanceo:** Independientemente del esquema de pooling temporal, todas las representaciones sufren un Recall promedio crítico inferior a $0.15$ bajo la pérdida simétrica estándar ($C=1.0$, `class_weight=None`). La SVM clasifica casi la totalidad de las instancias en las clases mayoritarias (`Ideation` y `Supportive`), confirmando que la agregación temporal por sí sola es insuficiente si no se interviene la función objetivo del clasificador (motivación analítica para la RQ2).
 
 ### 4.2 Profiling y Análisis de Coste Computacional (Eficiencia vs. Eficacia)
 

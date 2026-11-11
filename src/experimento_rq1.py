@@ -52,17 +52,26 @@ def ejecutar_experimento_rq1(semillas: List[int] = [42, 43, 44, 45, 46]) -> pd.D
     print("=" * 80)
 
     # 1. Cargar partición común oficial del equipo (70/15/15, seed=42, stratify=y)
-    datos_equipo = cargar_particion_oficial_equipo()
-    idx_tr, idx_dev, idx_te = datos_equipo["idx"]
-    y_tr, y_dev, y_te = datos_equipo["y"]
-    clases = list(datos_equipo["clases"])
-    print(f"[*] Partición oficial cargada: Train={len(y_tr)} | Dev={len(y_dev)} | Test={len(y_te)}")
-    print(f"[*] Clases: {clases}")
-    
-    # Índice de la clase 'Attempt'
+    # y pre-cargar las 5 particiones estratificadas para el análisis de varianza estadística
+    datos_oficial = cargar_particion_oficial_equipo(seed=42)
+    clases = list(datos_oficial["clases"])
     idx_attempt = clases.index("Attempt")
 
-    # 2. Cargar o generar las 5 representaciones factoriales de MentalBERT
+    print(f"[*] Clases oficiales: {clases} (Clase crítica 'Attempt' indexada en {idx_attempt})")
+    print(f"[*] Pre-cargando particiones estratificadas para semillas {semillas}...", flush=True)
+
+    particiones_semillas = {}
+    for s in semillas:
+        p = cargar_particion_oficial_equipo(seed=s)
+        particiones_semillas[s] = {
+            "idx_tr": p["idx"][0],
+            "idx_te": p["idx"][2],
+            "y_tr": p["y"][0],
+            "y_te": p["y"][2],
+        }
+    print(f"[*] Partición oficial Train={len(particiones_semillas[42]['y_tr'])} | Test={len(particiones_semillas[42]['y_te'])}")
+
+    # 2. Cargar las 5 representaciones factoriales de MentalBERT desde caché
     extractor = MentalBertHierarchicalExtractor()
     representaciones_dict = extractor.obtener_o_generar_representaciones()
 
@@ -80,8 +89,6 @@ def ejecutar_experimento_rq1(semillas: List[int] = [42, 43, 44, 45, 46]) -> pd.D
     for idx_est, (nombre_est, clave_dict) in enumerate(estrategias, 1):
         print(f"\n[Estrategia {idx_est}/5] Evaluando '{nombre_est}' (clave: {clave_dict})...", flush=True)
         X_all = representaciones_dict[clave_dict]
-        X_tr = X_all[idx_tr]
-        X_te = X_all[idx_te]
 
         runs_f1_att = []
         runs_rec_att = []
@@ -90,20 +97,27 @@ def ejecutar_experimento_rq1(semillas: List[int] = [42, 43, 44, 45, 46]) -> pd.D
         runs_bal_acc = []
         runs_kappa = []
 
-        # Evaluación sobre múltiples semillas (semilla 42 es el run oficial)
+        # Evaluación sobre las semillas: s=42 es la oficial; el resto evalúa estabilidad de partición
         for s in semillas:
+            p_s = particiones_semillas[s]
+            X_tr_s = X_all[p_s["idx_tr"]]
+            X_te_s = X_all[p_s["idx_te"]]
+            y_tr_s = p_s["y_tr"]
+            y_te_s = p_s["y_te"]
+
+            # LinearSVC estándar (L2-penalized Squared Hinge Loss, C=1.0)
             clf = LinearSVC(C=1.0, random_state=s, max_iter=2000, dual="auto")
-            clf.fit(X_tr, y_tr)
-            y_pred = clf.predict(X_te)
+            clf.fit(X_tr_s, y_tr_s)
+            y_pred = clf.predict(X_te_s)
 
-            f1_att = f1_score(y_te, y_pred, labels=[clases[idx_attempt]], average="macro", zero_division=0)
-            rec_att = recall_score(y_te, y_pred, labels=[clases[idx_attempt]], average="macro", zero_division=0)
-            prec_att = precision_score(y_te, y_pred, labels=[clases[idx_attempt]], average="macro", zero_division=0)
-            macro_f1 = f1_score(y_te, y_pred, average="macro", zero_division=0)
-            bal_acc = balanced_accuracy_score(y_te, y_pred)
-            kappa = cohen_kappa_score(y_te, y_pred, weights="quadratic")
+            f1_att = f1_score(y_te_s, y_pred, labels=[clases[idx_attempt]], average="macro", zero_division=0)
+            rec_att = recall_score(y_te_s, y_pred, labels=[clases[idx_attempt]], average="macro", zero_division=0)
+            prec_att = precision_score(y_te_s, y_pred, labels=[clases[idx_attempt]], average="macro", zero_division=0)
+            macro_f1 = f1_score(y_te_s, y_pred, average="macro", zero_division=0)
+            bal_acc = balanced_accuracy_score(y_te_s, y_pred)
+            kappa = cohen_kappa_score(y_te_s, y_pred, weights="quadratic")
 
-            print(f"    -> Seed {s}: F1-Attempt={f1_att:.3f} | Recall={rec_att:.3f} | Prec={prec_att:.3f} | Macro-F1={macro_f1:.3f}", flush=True)
+            print(f"    -> Seed {s}: F1-Attempt={f1_att:.3f} | Recall={rec_att:.3f} | Prec={prec_att:.3f} | Macro-F1={macro_f1:.3f} | Quad-Kappa={kappa:.3f}", flush=True)
 
             runs_f1_att.append(f1_att)
             runs_rec_att.append(rec_att)
