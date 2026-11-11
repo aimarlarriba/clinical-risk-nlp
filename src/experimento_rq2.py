@@ -25,6 +25,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.svm import LinearSVC
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_selection import SelectKBest, chi2
 from sklearn.metrics import (
     f1_score,
     recall_score,
@@ -42,7 +44,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from src.modulo_comun_equipo import cargar_particion_oficial_equipo
+from src.modulo_comun_equipo import cargar_particion_oficial_equipo, RUTA_CSV_DEFECTO, limpiar_texto_reddit
 from src.extraccion_mentalbert import MentalBertHierarchicalExtractor
 
 DIR_GRAFICAS = PROJECT_ROOT / "data_processed" / "graficas_clasificacion"
@@ -167,13 +169,21 @@ def ejecutar_experimento_rq2(
           f"F1(Attempt)={punto_optimo_pareto['F1_Attempt_mean']:.3f} | "
           f"Macro-F1={punto_optimo_pareto['Macro_F1_mean']:.3f}")
 
-    print("\n--- FASE 2: COMPARATIVA FACTORIAL DE MODELOS BAJO EL COSTE ÓPTIMO ---")
+    print("\n--- FASE 2: ESTUDIO DE ENRIQUECIMIENTO NEURO-SIMBÓLICO (MENTALBERT + TF-IDF CRÍTICO) ---")
+    df_raw = pd.read_csv(RUTA_CSV_DEFECTO)
+    textos_raw = np.array(df_raw["Post"].fillna("").apply(limpiar_texto_reddit).tolist())
+
+    modelos_comparativa = [
+        ("1. Plano Truncado (512)", "plano"),
+        ("2. Jerárquico Mean-Mean", "mean_mean"),
+        ("3. Solo TF-IDF Crítico (Simbólico)", "tfidf_solo"),
+        ("4. Híbrido Propuesto (MentalBERT + TF-IDF Crítico)", "hibrido"),
+    ]
+
     filas_comparativa = []
 
-    for desc_rep, clave_rep in representaciones_eval:
-        X_rep = rep_dict[clave_rep]
-
-        for modo_pesos in ["1. Simétrico (Baseline r=1.0)", f"2. Asimétrico Óptimo (r={r_optimo})", "3. Heurístico Balanced"]:
+    for desc_mod, tipo_mod in modelos_comparativa:
+        for modo_pesos in ["Simétrico (r=1.0)", "Heurístico Balanced"]:
             runs_f1 = []
             runs_rec = []
             runs_prec = []
@@ -184,16 +194,36 @@ def ejecutar_experimento_rq2(
                 idx_tr, y_tr = particiones[s]["tr"]
                 idx_te, y_te = particiones[s]["te"]
 
-                X_tr, y_tr = X_rep[idx_tr], y_tr
-                X_te, y_te = X_rep[idx_te], y_te
+                # Extraer representaciones según el modelo
+                if tipo_mod == "plano":
+                    X_tr = rep_dict["plano_truncado"][idx_tr]
+                    X_te = rep_dict["plano_truncado"][idx_te]
+                elif tipo_mod == "mean_mean":
+                    X_tr = rep_dict["mean_mean"][idx_tr]
+                    X_te = rep_dict["mean_mean"][idx_te]
+                elif tipo_mod == "tfidf_solo":
+                    vec = TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_df=0.8, sublinear_tf=True)
+                    X_tfidf_tr = vec.fit_transform(textos_raw[idx_tr])
+                    X_tfidf_te = vec.transform(textos_raw[idx_te])
+                    selector = SelectKBest(chi2, k=100)
+                    X_tr = selector.fit_transform(X_tfidf_tr, y_tr == nombre_attempt).toarray()
+                    X_te = selector.transform(X_tfidf_te).toarray()
+                elif tipo_mod == "hibrido":
+                    # Ajuste del espacio léxico estrictamente sobre Train (Cero Data Leakage)
+                    vec = TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_df=0.8, sublinear_tf=True)
+                    X_tfidf_tr = vec.fit_transform(textos_raw[idx_tr])
+                    X_tfidf_te = vec.transform(textos_raw[idx_te])
+                    selector = SelectKBest(chi2, k=100)
+                    X_sel_tr = selector.fit_transform(X_tfidf_tr, y_tr == nombre_attempt).toarray()
+                    X_sel_te = selector.transform(X_tfidf_te).toarray()
 
-                if modo_pesos.startswith("1."):
-                    cw = None
-                elif modo_pesos.startswith("2."):
-                    cw = {c: 1.0 for c in clases}
-                    cw[nombre_attempt] = float(r_optimo)
-                else:
-                    cw = "balanced"
+                    # Fusión heterogénea MentalBERT + TF-IDF Crítico re-ponderado
+                    X_mb_tr = rep_dict["plano_truncado"][idx_tr]
+                    X_mb_te = rep_dict["plano_truncado"][idx_te]
+                    X_tr = np.hstack([X_mb_tr, X_sel_tr * 2.0])
+                    X_te = np.hstack([X_mb_te, X_sel_te * 2.0])
+
+                cw = None if modo_pesos.startswith("Simétrico") else "balanced"
 
                 clf = LinearSVC(C=1.0, class_weight=cw, random_state=s, max_iter=3000, dual="auto")
                 clf.fit(X_tr, y_tr)
@@ -205,9 +235,9 @@ def ejecutar_experimento_rq2(
                 runs_macro.append(f1_score(y_te, y_pred, average="macro", zero_division=0))
                 runs_kap.append(cohen_kappa_score(y_te, y_pred, weights="quadratic"))
 
-            filas_comparativa.append({
-                "Representacion": desc_rep,
-                "Configuracion_Costes": modo_pesos,
+            res_comp = {
+                "Modelo": desc_mod,
+                "Pesos": modo_pesos,
                 "F1_Attempt_seed42": runs_f1[0],
                 "F1_Attempt_mean": np.mean(runs_f1),
                 "F1_Attempt_std": np.std(runs_f1),
@@ -219,7 +249,9 @@ def ejecutar_experimento_rq2(
                 "Macro_F1_std": np.std(runs_macro),
                 "Quadratic_Kappa_mean": np.mean(runs_kap),
                 "Quadratic_Kappa_std": np.std(runs_kap),
-            })
+            }
+            filas_comparativa.append(res_comp)
+            print(f"  {desc_mod:<50} [{modo_pesos:<19}] -> F1(Att): {res_comp['F1_Attempt_mean']:.3f}±{res_comp['F1_Attempt_std']:.3f} | Rec: {res_comp['Recall_Attempt_mean']:.3f} | Prec: {res_comp['Precision_Attempt_mean']:.3f} | Macro: {res_comp['Macro_F1_mean']:.3f}")
 
     df_comparativa = pd.DataFrame(filas_comparativa)
 
@@ -255,27 +287,26 @@ def ejecutar_experimento_rq2(
     plt.close()
     print(f"  [OK] Frontera de Pareto guardada en: {out_pareto.name}")
 
-    # FIG 2: Comparativa de Barras de Modelos bajo Coste Óptimo
-    fig, ax = plt.subplots(figsize=(9.5, 5.0), dpi=300)
+    # FIG 2: Comparativa de Barras de Modelos bajo Enriquecimiento Neuro-Simbólico
+    fig, ax = plt.subplots(figsize=(10.0, 5.2), dpi=300)
     sns.set_theme(style="whitegrid")
 
-    sub_df = df_comparativa[df_comparativa["Configuracion_Costes"].str.contains("Asimétrico|Simétrico")]
     sns.barplot(
-        data=sub_df,
-        x="Representacion",
-        y="Recall_Attempt_mean",
-        hue="Configuracion_Costes",
-        palette=["#999999", "#d95f02"],
+        data=df_comparativa,
+        x="Modelo",
+        y="F1_Attempt_mean",
+        hue="Pesos",
+        palette=["#2b5c8f", "#d95f02"],
         ax=ax,
         edgecolor="#333333",
         linewidth=0.8
     )
-    ax.set_title("RQ2: Ganancia de Sensibilidad (Recall) tras la Optimización Asimétrica de Costes", fontsize=11, fontweight="bold", pad=12)
-    ax.set_ylabel("Recall en Clase Crítica 'Attempt'", fontsize=11, fontweight="bold")
-    ax.set_xlabel("Estrategia de Representación Factorial", fontsize=11, fontweight="bold")
-    ax.set_xticklabels(["Jerárquico Mean-Mean", "Plano Truncado (512)", "Jerárquico Max-Max"], fontsize=10)
-    ax.set_ylim(0.0, 1.0)
-    ax.legend(title="Función Objetivo", title_fontsize=10, loc="upper left")
+    ax.set_title("RQ2: Impacto del Enriquecimiento Neuro-Simbólico (MentalBERT + TF-IDF Crítico) en F1-Attempt", fontsize=11, fontweight="bold", pad=12)
+    ax.set_ylabel("F1-Score en Clase Crítica 'Attempt' (μ)", fontsize=11, fontweight="bold")
+    ax.set_xlabel("Arquitectura de Representación", fontsize=11, fontweight="bold")
+    ax.set_xticklabels(["Plano (512)", "Mean-Mean", "Solo TF-IDF", "Híbrido Propuesto"], fontsize=10, fontweight="bold")
+    ax.set_ylim(0.0, 0.40)
+    ax.legend(title="Configuración de Costes", title_fontsize=10, loc="upper right")
     plt.tight_layout()
 
     out_bars = DIR_GRAFICAS / "fig_rq2_cost_gain_bars.png"

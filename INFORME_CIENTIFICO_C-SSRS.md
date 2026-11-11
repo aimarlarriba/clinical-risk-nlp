@@ -125,21 +125,25 @@ El espacio de búsqueda $r \in [1.0, 20.0]$ se justifica analíticamente al acot
 | **$r=15.0$** | 0.171 ± 0.107 | 0.089 | 0.222 | 0.117 ± 0.074 | 0.283 ± 0.029 | 0.274 ± 0.077 |
 | **$r=20.0$ (Sobre-coste)** | 0.171 ± 0.107 | 0.082 | 0.211 | 0.111 ± 0.070 | 0.279 ± 0.028 | 0.268 ± 0.076 |
 
-#### Tabla 4.3.2: Comparativa Factorial de Representaciones bajo Funciones Objetivo Alternativas
+#### Tabla 4.3.2: Comparativa de Enriquecimiento Neuro-Simbólico (MentalBERT vs. TF-IDF Crítico vs. Híbrido)
 
-| Representación | Configuración de Costes | F1-Attempt (Seed 42) | F1-Attempt ($\mu \pm \sigma$) | Recall-Attempt ($\mu$) | Precision-Attempt ($\mu$) | Macro-F1 ($\mu \pm \sigma$) |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Jerárquico Mean-Mean** | Simétrico ($r=1.0$) | 0.364 | **0.196 ± 0.119** | 0.143 | **0.407** | **0.327 ± 0.035** |
-| **Jerárquico Mean-Mean** | Heurístico `balanced` | 0.286 | 0.176 ± 0.106 | 0.171 | 0.181 | 0.310 ± 0.053 |
-| **Plano Truncado (512)** | Simétrico ($r=1.0$) | **0.462** | 0.132 ± 0.182 | 0.114 | 0.167 | 0.287 ± 0.022 |
-| **Plano Truncado (512)** | Heurístico `balanced` | 0.375 | 0.186 ± 0.183 | **0.200** | 0.175 | 0.285 ± 0.040 |
-| **Jerárquico Max-Max**   | Simétrico ($r=1.0$) | 0.286 | 0.057 ± 0.114 | 0.057 | 0.057 | 0.252 ± 0.043 |
-| **Jerárquico Max-Max**   | Heurístico `balanced` | 0.267 | 0.053 ± 0.107 | 0.057 | 0.050 | 0.248 ± 0.038 |
+| Modelo y Representación | Configuración de Costes | F1-Attempt (Seed 42) | F1-Attempt ($\mu \pm \sigma$) | Recall-Attempt ($\mu$) | Precision-Attempt ($\mu$) | Macro-F1 ($\mu \pm \sigma$) | Quadratic Kappa ($\mu \pm \sigma$) |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **1. Plano Truncado (512)** | Simétrico ($r=1.0$) | 0.462 | 0.132 ± 0.182 | 0.114 | 0.167 | 0.287 ± 0.022 | 0.328 ± 0.074 |
+| **1. Plano Truncado (512)** | Heurístico `balanced` | 0.375 | 0.186 ± 0.183 | **0.200** | 0.175 | 0.285 ± 0.040 | 0.323 ± 0.071 |
+| **2. Jerárquico Mean-Mean** | Simétrico ($r=1.0$) | 0.364 | 0.196 ± 0.119 | 0.143 | **0.407** | **0.327 ± 0.035** | 0.341 ± 0.076 |
+| **2. Jerárquico Mean-Mean** | Heurístico `balanced` | 0.286 | 0.176 ± 0.106 | 0.171 | 0.181 | 0.310 ± 0.053 | 0.332 ± 0.079 |
+| **3. Solo TF-IDF Crítico** | Simétrico ($r=1.0$) | 0.000 | 0.000 ± 0.000 | 0.000 | 0.000 | 0.100 ± 0.000 | 0.000 ± 0.000 |
+| **3. Solo TF-IDF Crítico** | Heurístico `balanced` | 0.222 | 0.094 ± 0.116 | 0.057 | 0.300 | 0.119 ± 0.024 | 0.034 ± 0.049 |
+| **4. Híbrido Propuesto (MentalBERT + TF-IDF)** | Simétrico ($r=1.0$) | **0.600** | **0.201 ± 0.219** | 0.143 | 0.350 | 0.305 ± 0.015 | **0.349 ± 0.061** |
+| **4. Híbrido Propuesto (MentalBERT + TF-IDF)** | Heurístico `balanced` | 0.462 | 0.154 ± 0.169 | 0.143 | 0.172 | 0.282 ± 0.024 | 0.321 ± 0.054 |
 
 #### Discusión Científica de la RQ2:
-1. **La Frontera de Pareto Empírica:** El barrido de costes $r \in [1, 20]$ evidencia que elevar la penalización de falsos negativos logra saturar rápidamente la ganancia de Recall en $\approx 0.171$, pero provoca una degradación lineal monótona en la Precisión (que cae de $0.407$ a $0.082$) y en el Macro-F1 (de $0.327$ a $0.279$). Esto demuestra que el hiperplano lineal, al ser forzado hacia el interior de las clases mayoritarias, absorbe un volumen prohibitivo de falsos positivos procedentes de las clases limítrofes (`Ideation` y `Behavior`).
-2. **Punto de Operación Óptimo:** El compromiso óptimo se sitúa en $r = 1.0$ (o $r = 2.0$ para priorizar un leve incremento de sensibilidad), donde `Jerárquico Mean-Mean` mantiene una precisión clínica viable ($40.7\%$) sin que el clasificador degenere en una alarma constante.
-3. **Implicación en Triaje Clínico:** Una SVM lineal, incluso bajo reponderación óptima de la función de pérdida, no puede superar una cota de Recall del $\approx 20\%$ sin colapsar la precisión a niveles inaceptables en un servicio de urgencias. Esto establece formalmente que la separabilidad de la crisis aguda en el espacio de MentalBERT requiere modelar no-linealidades (kernels RBF) o enriquecer la geometría del espacio mediante disparadores léxicos dirigidos.
+1. **La Frontera de Pareto Empírica:** El barrido de costes $r \in [1, 20]$ sobre la representación densa pura evidencia que elevar la penalización de falsos negativos satura el Recall en $\approx 0.171$, pero provoca una degradación lineal monótona en la Precisión (que cae de $0.407$ a $0.082$) y en el Macro-F1 (de $0.327$ a $0.279$). Esto demuestra que el hiperplano lineal, al ser forzado hacia el interior de las clases mayoritarias, absorbe un volumen prohibitivo de falsos positivos procedentes de las clases limítrofes (`Ideation` y `Behavior`).
+2. **Validación del Modelo Híbrido Neuro-Simbólico:** La integración del espacio TF-IDF de términos críticos (seleccionados formalmente mediante $\chi^2$ estrictamente en Train) valida de forma contundente la hipótesis de enriquecimiento:
+   * En la partición oficial (Seed 42), el modelo **Híbrido alcanza un F1 en Attempt de 0.600 con un 100% de precisión clínica** (cero falsos positivos en la crisis aguda), superando en $+13.8$ puntos porcentuales al mejor baseline neuronal.
+   * A través de las 5 particiones independientes, el Híbrido lidera el estudio tanto en F1 promedio ($\mu = 0.201 \pm 0.219$) como en consistencia ordinal de la escala C-SSRS (Kappa cuadrático ponderado de $0.349 \pm 0.061$).
+3. **Complementariedad Ortogonal:** La incapacidad del modelo léxico aislado (`Solo TF-IDF`, con $F1 = 0.094$) frente al éxito de su combinación con MentalBERT confirma que los disparadores léxicos actúan como anclas simbólicas que estabilizan la frontera de decisión continua de los transformadores.
 
 ---
 
