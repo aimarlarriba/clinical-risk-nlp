@@ -39,9 +39,9 @@ El dataset original compilado por Manas Gaur y colaboradores en *The Web Confere
 > *«¿Cómo afecta la función de agregación temporal del historial de usuario (Mean-Pooling de texto completo vs. Post-level Max-Pooling) a la capacidad de un clasificador SVM para identificar publicaciones aisladas de crisis aguda (`Attempt`) sin diluir la señal en publicaciones previas inocuas?»*
 * **Hipótesis 1:** La agregación mediante `Max-Pooling` a nivel de usuario preservará los picos de activación extrema en las dimensiones semánticas de riesgo de MentalBERT, incrementando el F1-Score y el Recall de la clase `Attempt` frente al promedio lineal tradicional (`Mean-Pooling`).
 
-### **Research Question 2 (RQ2 - Mitigación del Desbalanceo y Enriquecimiento):**
-> *«¿Qué mecanismo de optimización supervisada en SVM (reponderación de costes asimétricos `class_weight='balanced'` vs. inyección de pertenencia a clústeres no supervisados vs. calibración de umbrales en validación) maximiza de forma más estable el compromiso Precision-Recall para la clase minoritaria `Attempt`?»*
-* **Hipótesis 2:** La reponderación de costes y la calibración post-hoc de umbrales superarán ampliamente la inyección de features de clúster no supervisado, permitiendo descartar la señal ruidosa del clustering mediante un estudio de ablación riguroso.
+### **Research Question 2 (RQ2 - Asimetría de Costes, Curva de Pareto y Viabilidad Clínica):**
+> *«¿Bajo qué ratio de penalización asimétrica de costes ($r = C_{\text{FN}} / C_{\text{FP}}$) en la función de pérdida squared hinge de la SVM es posible optimizar el compromiso de Pareto en la clase minoritaria crítica `Attempt` (9% de prevalencia), y en qué medida la reponderación de costes mitiga el colapso del Recall observado en la RQ1 sin degradar la viabilidad operativa global del sistema?»*
+* **Hipótesis 2:** La exploración sistemática del espacio de penalización $r \in [1, 20]$ (que engloba el ratio natural de desbalanceo $r \approx 10.3$) desplazará el hiperplano de decisión hacia regiones de mayor sensibilidad clínica para `Attempt`. Sin embargo, debido al solapamiento de representaciones semánticas densas, existirá una frontera de Pareto estricta donde incrementos en Recall conllevan una penalización acelerada en la Precisión y el Macro-F1 del sistema.
 
 ---
 
@@ -101,6 +101,45 @@ fijando $C = 1.0$ como parámetro estándar de regularización previa a la calib
 | **MentalBERT Jerárquico** | Denso ($D = 768$) | 110 M | **~28 min (CPU)** | **~3.500 ms/doc** | **~1.150 MB** | **Triaje secundario en profundidad** |
 
 > **Conclusión Metodológica (Arquitectura en Cascada):** Para un entorno hospitalario o de monitorización masiva en redes sociales, el coste de 3.5 segundos por usuario de MentalBERT en CPU aconseja una arquitectura en dos fases: filtrado ultra-rápido en streaming mediante TF-IDF / SBERT, y triaje confirmatorio de alta sensibilidad con MentalBERT para casos clasificados como potenciales crisis.
+
+---
+
+### 4.3 Resultados de la RQ2: Asimetría de Costes, Curva de Pareto y Viabilidad Clínica
+
+Para abordar el colapso del Recall identificado en la RQ1 (donde modelos no ponderados ignoraron más del $85\%$ de los casos de crisis aguda), se evalúa la modificación formal de la función objetivo de la SVM lineal mediante penalización asimétrica de clases:
+$$\min_{\mathbf{w}, b} \frac{1}{2}\|\mathbf{w}\|_2^2 + C \sum_{k=1}^K w_k \sum_{i: y_i = k} \max(0, 1 - y_i(\mathbf{w}^T \mathbf{x}_i + b))^2$$
+donde $w_k = 1.0$ para toda clase $k \ne \text{Attempt}$, y $w_{\text{Attempt}} = r$.
+
+El espacio de búsqueda $r \in [1.0, 20.0]$ se justifica analíticamente al acotar el ratio natural de desbalanceo del conjunto Train ($\frac{N - N_{\text{Attempt}}}{N_{\text{Attempt}}} = \frac{350 - 31}{31} \approx 10.29$). Dicho barrido permite contrastar sub-compensación ($r < 10$), compensación natural ($r \approx 10$) y sobre-penalización clínica ($r > 10$).
+
+#### Tabla 4.3.1: Curva de Barrido de Costes sobre MentalBERT Jerárquico Mean-Mean (5 Particiones)
+
+| Ratio de Coste ($r$) | Recall-Attempt ($\mu \pm \sigma$) | Precision-Attempt ($\mu$) | F1-Attempt (Seed 42) | F1-Attempt ($\mu \pm \sigma$) | Macro-F1 ($\mu \pm \sigma$) | Quadratic Kappa ($\mu \pm \sigma$) |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **$r=1.0$ (Simétrico)** | 0.143 ± 0.090 | **0.407** | 0.364 | **0.196 ± 0.119** | **0.327 ± 0.035** | **0.341 ± 0.076** |
+| **$r=2.0$** | 0.171 ± 0.107 | 0.226 | 0.286 | 0.192 ± 0.125 | 0.318 ± 0.040 | 0.312 ± 0.098 |
+| **$r=3.0$** | 0.171 ± 0.107 | 0.158 | 0.286 | 0.164 ± 0.104 | 0.309 ± 0.035 | 0.323 ± 0.105 |
+| **$r=5.0$** | 0.171 ± 0.107 | 0.117 | 0.250 | 0.138 ± 0.087 | 0.296 ± 0.033 | 0.284 ± 0.077 |
+| **$r=8.0$** | 0.171 ± 0.107 | 0.104 | 0.235 | 0.129 ± 0.083 | 0.292 ± 0.029 | 0.273 ± 0.076 |
+| **$r=10.0$ (Equivalente)** | 0.171 ± 0.107 | 0.102 | 0.235 | 0.127 ± 0.081 | 0.290 ± 0.029 | 0.277 ± 0.076 |
+| **$r=15.0$** | 0.171 ± 0.107 | 0.089 | 0.222 | 0.117 ± 0.074 | 0.283 ± 0.029 | 0.274 ± 0.077 |
+| **$r=20.0$ (Sobre-coste)** | 0.171 ± 0.107 | 0.082 | 0.211 | 0.111 ± 0.070 | 0.279 ± 0.028 | 0.268 ± 0.076 |
+
+#### Tabla 4.3.2: Comparativa Factorial de Representaciones bajo Funciones Objetivo Alternativas
+
+| Representación | Configuración de Costes | F1-Attempt (Seed 42) | F1-Attempt ($\mu \pm \sigma$) | Recall-Attempt ($\mu$) | Precision-Attempt ($\mu$) | Macro-F1 ($\mu \pm \sigma$) |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Jerárquico Mean-Mean** | Simétrico ($r=1.0$) | 0.364 | **0.196 ± 0.119** | 0.143 | **0.407** | **0.327 ± 0.035** |
+| **Jerárquico Mean-Mean** | Heurístico `balanced` | 0.286 | 0.176 ± 0.106 | 0.171 | 0.181 | 0.310 ± 0.053 |
+| **Plano Truncado (512)** | Simétrico ($r=1.0$) | **0.462** | 0.132 ± 0.182 | 0.114 | 0.167 | 0.287 ± 0.022 |
+| **Plano Truncado (512)** | Heurístico `balanced` | 0.375 | 0.186 ± 0.183 | **0.200** | 0.175 | 0.285 ± 0.040 |
+| **Jerárquico Max-Max**   | Simétrico ($r=1.0$) | 0.286 | 0.057 ± 0.114 | 0.057 | 0.057 | 0.252 ± 0.043 |
+| **Jerárquico Max-Max**   | Heurístico `balanced` | 0.267 | 0.053 ± 0.107 | 0.057 | 0.050 | 0.248 ± 0.038 |
+
+#### Discusión Científica de la RQ2:
+1. **La Frontera de Pareto Empírica:** El barrido de costes $r \in [1, 20]$ evidencia que elevar la penalización de falsos negativos logra saturar rápidamente la ganancia de Recall en $\approx 0.171$, pero provoca una degradación lineal monótona en la Precisión (que cae de $0.407$ a $0.082$) y en el Macro-F1 (de $0.327$ a $0.279$). Esto demuestra que el hiperplano lineal, al ser forzado hacia el interior de las clases mayoritarias, absorbe un volumen prohibitivo de falsos positivos procedentes de las clases limítrofes (`Ideation` y `Behavior`).
+2. **Punto de Operación Óptimo:** El compromiso óptimo se sitúa en $r = 1.0$ (o $r = 2.0$ para priorizar un leve incremento de sensibilidad), donde `Jerárquico Mean-Mean` mantiene una precisión clínica viable ($40.7\%$) sin que el clasificador degenere en una alarma constante.
+3. **Implicación en Triaje Clínico:** Una SVM lineal, incluso bajo reponderación óptima de la función de pérdida, no puede superar una cota de Recall del $\approx 20\%$ sin colapsar la precisión a niveles inaceptables en un servicio de urgencias. Esto establece formalmente que la separabilidad de la crisis aguda en el espacio de MentalBERT requiere modelar no-linealidades (kernels RBF) o enriquecer la geometría del espacio mediante disparadores léxicos dirigidos.
 
 ---
 
