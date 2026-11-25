@@ -26,7 +26,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_selection import SelectKBest, chi2
-from sklearn.metrics import f1_score, precision_score
+from sklearn.metrics import cohen_kappa_score, f1_score
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.preprocessing import StandardScaler, normalize
 from sklearn.svm import SVC, LinearSVC
@@ -38,10 +38,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.extraccion_mentalbert import MentalBertHierarchicalExtractor
 from src.metricas_clasificacion import (
     CLASES_ORDEN_CSSRS,
+    GRID_C_LOGARITMICO,
+    calibrar_umbral_en_dev,
     construir_espacio_hibrido,
     evaluar_predicciones_clinicas,
     perfilar_entrenamiento_e_inferencia,
     resumir_metricas_multirun,
+    seleccionar_c_en_dev,
 )
 from src.modulo_comun_equipo import RUTA_CSV_DEFECTO, cargar_particion_oficial_equipo, limpiar_texto_reddit
 
@@ -165,32 +168,31 @@ def _seleccionar_rbf_cv_train(
     return mejor_par
 
 
-def _calibrar_umbral_con_precision_min(
-    scores_dev: np.ndarray,
+def _seleccionar_c_ordinal_en_dev(
+    X_tr: np.ndarray,
+    y_tr: np.ndarray,
+    X_dev: np.ndarray,
     y_dev: np.ndarray,
-    prec_min: float = 0.25,
-    clase_critica: str = "Attempt",
+    seed: int = 42,
 ) -> float:
     """
-    Calibra theta* en Dev maximizando F1_dev(Attempt) sujeto a Precision_dev >= prec_min
-    para evitar colapsos de Accuracy por exceso de falsos positivos.
+    Selecciona C* para OrdinalSVMClassifier sobre rejilla logarítmica base 10
+    evaluando exclusivamente en Dev (Macro-F1 con desempate por Quadratic Kappa).
     """
-    y_dev_bin = (np.asarray(y_dev) == clase_critica).astype(int)
-    umbrales = np.linspace(float(np.min(scores_dev)), float(np.max(scores_dev)), 100)
-    mejor_th = float(np.max(scores_dev)) + 1.0
-    mejor_f1 = -1.0
-
-    for th in umbrales:
-        pred_bin = (scores_dev >= th).astype(int)
-        if np.sum(pred_bin) == 0:
-            continue
-        prec = precision_score(y_dev_bin, pred_bin, zero_division=0)
-        if prec >= prec_min:
-            f1_d = f1_score(y_dev_bin, pred_bin, zero_division=0)
-            if f1_d > mejor_f1:
-                mejor_f1 = float(f1_d)
-                mejor_th = float(th)
-    return mejor_th
+    mejor_c = 1.0
+    mejor_obj = (-1.0, -1.0)
+    for c_val in (0.1, 0.3162, 1.0, 3.1623):
+        clf = OrdinalSVMClassifier(CLASES_ORDEN_CSSRS, C=c_val, class_weight="balanced", random_state=seed)
+        clf.fit(X_tr, y_tr)
+        yp = clf.predict(X_dev)
+        obj = (
+            float(f1_score(y_dev, yp, average="macro", zero_division=0)),
+            float(cohen_kappa_score(y_dev, yp, labels=CLASES_ORDEN_CSSRS, weights="quadratic")),
+        )
+        if obj > mejor_obj:
+            mejor_obj = obj
+            mejor_c = float(c_val)
+    return mejor_c
 
 
 def ejecutar_experimento_mejoras(semillas: List[int] = [42, 43, 44, 45, 46]) -> pd.DataFrame:
@@ -280,8 +282,13 @@ def ejecutar_experimento_mejoras(semillas: List[int] = [42, 43, 44, 45, 46]) -> 
                 )
 
                 if cfg["modo"] in ("l2_multi_lin", "l2_multi_lin_th"):
-                    def _crear_lin_n(seed_val: int = s) -> LinearSVC:
-                        return LinearSVC(C=0.3162, class_weight="balanced", random_state=seed_val, max_iter=5000, dual=False)
+                    c_opt, _ = seleccionar_c_en_dev(
+                        X_tr, y_tr, X_dev, y_dev,
+                        grid_c=GRID_C_LOGARITMICO, class_weight="balanced", seed=s, clase_critica=nombre_attempt,
+                    )
+
+                    def _crear_lin_n(c_v: float = c_opt, seed_val: int = s) -> LinearSVC:
+                        return LinearSVC(C=c_v, class_weight="balanced", random_state=seed_val, max_iter=5000, dual=False)
 
                     clf, y_pred_base, costes = perfilar_entrenamiento_e_inferencia(_crear_lin_n, X_tr, y_tr, X_te)
                     idx_att_clf = list(clf.classes_).index(nombre_attempt)
@@ -289,7 +296,14 @@ def ejecutar_experimento_mejoras(semillas: List[int] = [42, 43, 44, 45, 46]) -> 
 
                     if cfg["modo"] == "l2_multi_lin_th":
                         scores_dev = clf.decision_function(X_dev)[:, idx_att_clf]
-                        th_seguro = _calibrar_umbral_con_precision_min(scores_dev, y_dev, prec_min=0.25, clase_critica=nombre_attempt)
+                        th_seguro, _ = calibrar_umbral_en_dev(
+                            scores_dev,
+                            y_dev,
+                            y_pred_dev_base=clf.predict(X_dev),
+                            prec_min=0.25,
+                            clase_critica=nombre_attempt,
+                            n_pasos=100,
+                        )
                         y_pred_te = y_pred_base.copy()
                         y_pred_te[scores_att_te >= th_seguro] = nombre_attempt
                     else:
@@ -311,8 +325,10 @@ def ejecutar_experimento_mejoras(semillas: List[int] = [42, 43, 44, 45, 46]) -> 
                     scores_att_te = clf.decision_function(X_te_r)[:, idx_att_clf]
 
                 else:  # l2_multi_ord
-                    def _crear_ord(seed_val: int = s) -> OrdinalSVMClassifier:
-                        return OrdinalSVMClassifier(CLASES_ORDEN_CSSRS, C=0.3162, class_weight="balanced", random_state=seed_val)
+                    c_ord = _seleccionar_c_ordinal_en_dev(X_tr, y_tr, X_dev, y_dev, seed=s)
+
+                    def _crear_ord(c_v: float = c_ord, seed_val: int = s) -> OrdinalSVMClassifier:
+                        return OrdinalSVMClassifier(CLASES_ORDEN_CSSRS, C=c_v, class_weight="balanced", random_state=seed_val)
 
                     clf, y_pred_te, costes = perfilar_entrenamiento_e_inferencia(_crear_ord, X_tr, y_tr, X_te)
                     idx_att_clf = list(clf.classes_).index(nombre_attempt)

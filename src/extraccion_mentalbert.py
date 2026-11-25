@@ -38,7 +38,16 @@ CACHE_FILES = {
 
 
 def extraer_lista_posts(raw_val: str) -> List[str]:
-    """Extrae la lista de posts individuales de la cadena serializada del CSV."""
+    """
+    Extrae la lista de publicaciones individuales desde la representación serializada del CSV.
+
+    Precondiciones:
+        - `raw_val` es un string o representación literal de lista de posts.
+    Postcondiciones:
+        - Devuelve una lista no vacía de strings (posts individuales filtrados por longitud > 10).
+    Complejidad:
+        - Temporal: O(L), Espacial: O(L) donde L es la longitud del texto del usuario.
+    """
     s = str(raw_val).strip()
     if s.startswith("[") and s.endswith("]"):
         try:
@@ -56,8 +65,14 @@ def extraer_lista_posts(raw_val: str) -> List[str]:
 
 def trocear_en_ventanas(texto: str, max_palabras: int = 150, solapamiento: int = 25) -> List[str]:
     """
-    Divide posts largos en ventanas con solapamiento para no truncar ningún token.
-    Si el post mide <= 150 palabras se devuelve íntegro como 1 fragmento.
+    Divide publicaciones largas en ventanas deslizantes con solapamiento para evitar truncamiento.
+
+    Precondiciones:
+        - 0 <= solapamiento < max_palabras.
+    Postcondiciones:
+        - Devuelve lista de fragmentos de a lo sumo `max_palabras` palabras cubriendo el 100% del texto.
+    Complejidad:
+        - Temporal: O(W), Espacial: O(W) donde W es el número de palabras del post.
     """
     palabras = texto.split()
     if len(palabras) <= max_palabras:
@@ -102,9 +117,16 @@ class MentalBertHierarchicalExtractor:
         ruta_checkpoint: Path = None,
     ) -> np.ndarray:
         """
-        Codifica fragmentos y extrae el vector medio con máscara de atención (768D).
-        Incluye guardado automático en disco cada `guardar_cada_n_lotes` lotes (por defecto 5)
-        y capacidad de reanudar automáticamente si el proceso se interrumpió.
+        Codifica fragmentos con MentalBERT y extrae mean-pooling con máscara de atención (768D).
+        Aplica ordenación por longitud dentro de cada bloque de checkpoint para reducir padding en CPU.
+
+        Precondiciones:
+            - `textos` no está vacío; `batch_size > 0` y `max_len <= 512`.
+        Postcondiciones:
+            - Devuelve matriz NumPy (len(textos), 768) en float32 preservando el orden original.
+        Complejidad:
+            - Temporal: O(M * L_max^2) por atención multi-cabeza sobre M fragmentos.
+            - Espacial: O(M * 768) en memoria y disco.
         """
         self._cargar_modelo()
         total_textos = len(textos)
@@ -200,8 +222,15 @@ class MentalBertHierarchicalExtractor:
 
     def obtener_o_generar_representaciones(self, ruta_csv: str = RUTA_CSV_DEFECTO) -> Dict[str, np.ndarray]:
         """
-        Devuelve un diccionario con las 4 representaciones jerárquicas:
-        {'mean_mean', 'max_mean', 'mean_max', 'max_max'}, cada una de tamaño (500, 768).
+        Carga desde caché .npy o genera las 5 representaciones de MentalBERT (500 x 768):
+        {'plano_truncado', 'mean_mean', 'max_mean', 'mean_max', 'max_max'}.
+
+        Precondiciones:
+            - Si no existen los archivos .npy en caché, debe existir el CSV en `ruta_csv`.
+        Postcondiciones:
+            - Todas las matrices devueltas tienen forma (N_usuarios, 768) en float32.
+        Complejidad:
+            - Temporal: O(1) lectura desde caché; O(F * L_max^2 + N * P) en extracción completa.
         """
         DIR_DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
         # Comprobar si las 4 ya están cacheadas

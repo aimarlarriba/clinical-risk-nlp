@@ -28,7 +28,18 @@ _CACHE_CORPUS_EQUIPO = {}
 
 
 def limpiar_texto_reddit(val):
-    """Convierte listas de posts serializadas como string ['post1', 'post2'] en un texto plano."""
+    """
+    Convierte listas de posts serializadas como string ['post1', 'post2'] en texto plano.
+
+    Entradas:
+        - val: valor crudo de la columna 'Post' del CSV.
+    Salidas:
+        - Cadena de texto unificada con los posts separados por espacio.
+    Precondiciones:
+        - Ninguna (admite valores nulos o strings arbitrarios).
+    Complejidad:
+        - Temporal: O(L), Espacial: O(L) donde L es la longitud del historial.
+    """
     val_str = str(val).strip()
     if val_str.startswith("[") and val_str.endswith("]"):
         try:
@@ -42,9 +53,20 @@ def limpiar_texto_reddit(val):
 
 def cargar_particion_oficial_equipo(ruta_csv=RUTA_CSV_DEFECTO, ruta_cache_emb=RUTA_CACHE_384D, seed=RANDOM_SEED):
     """
-    Precondición: Existe el archivo CSV en `ruta_csv`.
-    Postcondición: Devuelve un diccionario con los textos, los embeddings 384D y las etiquetas `y`
-    exactamente divididos en 70% Train (350), 15% Dev (75) y 15% Test (75) con `stratify=y` y `seed=42`.
+    Carga el corpus clínico y genera la partición estratificada oficial 70/15/15.
+
+    Entradas:
+        - ruta_csv: ruta al archivo CSV oficial de Reddit C-SSRS.
+        - ruta_cache_emb: ruta a la matriz caché .npy de embeddings comunes (384D).
+        - seed: semilla entera para la partición reproducible (oficial: 42).
+    Salidas:
+        - Diccionario con tuplas (Train, Dev, Test) para 'usuarios', 'textos', 'X_384', 'y' e 'idx'.
+    Precondiciones:
+        - Existe el archivo CSV en `ruta_csv` con columnas 'User', 'Post' y 'Label'.
+    Postcondiciones:
+        - Devuelve particiones disjuntas estratificadas: Train=350 (70%), Dev=75 (15%), Test=75 (15%).
+    Complejidad:
+        - Temporal: O(N * L) en la primera carga (O(N) en llamadas cacheadas); Espacial: O(N * D) con D=384.
     """
     clave_cache = (str(ruta_csv), str(ruta_cache_emb))
     if clave_cache not in _CACHE_CORPUS_EQUIPO:
@@ -106,6 +128,16 @@ class BaselineClusteringJerarquico384D:
         self.clases_ = None
 
     def fit(self, X_train, y_train):
+        """
+        Ajusta los clústeres aglomerativos sobre Train y calcula centroides y mapa mayoritario.
+
+        Precondiciones:
+            - len(X_train) == len(y_train) >= self.n_clusters.
+        Postcondiciones:
+            - Centroides y distribución de clases por clúster inicializados sin acceso a Dev/Test.
+        Complejidad:
+            - Temporal: O(N_tr^2 * D) para clustering jerárquico Ward; Espacial: O(N_tr^2).
+        """
         self.clases_ = np.unique(y_train)
         hc = AgglomerativeClustering(n_clusters=self.n_clusters, linkage=self.linkage)
         clusters_tr = hc.fit_predict(X_train)
@@ -115,6 +147,8 @@ class BaselineClusteringJerarquico384D:
 
         for c in range(self.n_clusters):
             mask = (clusters_tr == c)
+            if not np.any(mask):
+                continue
             self.centroides[c] = X_train[mask].mean(axis=0)
             y_c = y_train[mask]
             for idx_cls, cls_name in enumerate(self.clases_):
@@ -123,15 +157,22 @@ class BaselineClusteringJerarquico384D:
         return self
 
     def obtener_cluster_id(self, X):
-        """Útil para Aimar: devuelve el ID del clúster más cercano para usar como feature."""
+        """
+        Asigna cada muestra al índice del centroide más cercano bajo distancia euclídea.
+
+        Precondiciones: El modelo ha sido ajustado mediante `fit`.
+        Complejidad: Temporal O(N * K * D) donde K = self.n_clusters y D = 384.
+        """
         dist = cdist(X, self.centroides, metric="euclidean")
         return np.argmin(dist, axis=1)
 
     def predict(self, X):
+        """Predice la etiqueta mayoritaria del clúster asignado para cada muestra en X."""
         clusters = self.obtener_cluster_id(X)
         return np.array([self.mapa_clase[c] for c in clusters])
 
     def predict_proba(self, X):
+        """Devuelve las frecuencias empíricas de clase en Train asociadas al clúster asignado."""
         clusters = self.obtener_cluster_id(X)
         return self.probabilidades_cluster[clusters]
 
