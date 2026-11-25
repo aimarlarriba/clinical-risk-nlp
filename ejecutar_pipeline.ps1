@@ -1,11 +1,13 @@
-﻿# ==============================================================================
+# ==============================================================================
 # Script de ejecución de pipeline para Windows PowerShell
 # Tarea: Clasificación Supervisada de Texto (Corpus Reddit C-SSRS, N=500)
 # ==============================================================================
 param (
     [switch]$baseline,
     [switch]$rq1,
-    [switch]$rq2
+    [switch]$rq2,
+    [switch]$mejoras,
+    [switch]$svm_opt
 )
 
 Write-Host "======================================================================" -ForegroundColor Cyan
@@ -25,6 +27,8 @@ $argsList = @()
 if ($baseline) { $argsList += "--baseline" }
 if ($rq1) { $argsList += "--rq1" }
 if ($rq2) { $argsList += "--rq2" }
+if ($mejoras) { $argsList += "--mejoras" }
+if ($svm_opt) { $argsList += "--svm-opt" }
 
 & $pythonCmd main.py @argsList
 

@@ -19,8 +19,6 @@ import time
 from typing import List, Tuple, Dict
 import numpy as np
 import pandas as pd
-import torch
-from transformers import AutoTokenizer, AutoModel
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -78,12 +76,16 @@ def trocear_en_ventanas(texto: str, max_palabras: int = 150, solapamiento: int =
 class MentalBertHierarchicalExtractor:
     def __init__(self, model_name: str = "mental/mental-bert-base-uncased"):
         self.model_name = model_name
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = None
         self.tokenizer = None
         self.model = None
 
     def _cargar_modelo(self):
         if self.tokenizer is None or self.model is None:
+            import torch
+            from transformers import AutoModel, AutoTokenizer
+
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
             print(f"[*] Cargando {self.model_name} en dispositivo '{self.device}'...")
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModel.from_pretrained(self.model_name)
@@ -132,53 +134,62 @@ class MentalBertHierarchicalExtractor:
             except Exception as e:
                 print(f"[!] Advertencia al leer checkpoint {ruta_checkpoint}: {e}. Iniciando desde el principio.", flush=True)
 
+        import torch
+
         textos_pendientes = total_textos - offset_textos
         print(f"\n[*] Iniciando codificación [{desc}]: {textos_pendientes} fragmentos pendientes de {total_textos} en lotes (batch_size={batch_size})...", flush=True)
 
-        lote_inicial_idx = (offset_textos // batch_size) + 1
+        tam_bloque_ckpt = max(guardar_cada_n_lotes, 1) * batch_size
 
-        with torch.no_grad():
-            for idx_rel, i in enumerate(range(offset_textos, total_textos, batch_size), start=1):
-                idx_lote = (i // batch_size) + 1
-                lote = textos[i:i + batch_size]
-                tokens = self.tokenizer(
-                    lote, padding=True, truncation=True, max_length=max_len, return_tensors="pt"
-                ).to(self.device)
-                
-                out = self.model(**tokens)
-                mask = tokens["attention_mask"].unsqueeze(-1).expand(out[0].size()).float()
-                sum_emb = torch.sum(out[0] * mask, dim=1)
-                sum_mask = torch.clamp(mask.sum(dim=1), min=1e-9)
-                mean_pooled = sum_emb / sum_mask
-                embs_list.append(mean_pooled.cpu().numpy())
+        with torch.inference_mode():
+            for ini_bloque in range(offset_textos, total_textos, tam_bloque_ckpt):
+                fin_bloque = min(ini_bloque + tam_bloque_ckpt, total_textos)
+                textos_bloque = textos[ini_bloque:fin_bloque]
 
-                # Verbose de telemetría en tiempo real
+                # Ordenar dentro del bloque por longitud para minimizar padding en CPU, preservando orden original al guardar
+                orden_bloque = sorted(range(len(textos_bloque)), key=lambda idx: len(textos_bloque[idx]))
+                embs_bloque = np.empty((len(textos_bloque), 768), dtype=np.float32)
+
+                for j in range(0, len(orden_bloque), batch_size):
+                    indices_lote = orden_bloque[j:j + batch_size]
+                    lote = [textos_bloque[idx] for idx in indices_lote]
+                    tokens = self.tokenizer(
+                        lote, padding=True, truncation=True, max_length=max_len, return_tensors="pt"
+                    ).to(self.device)
+
+                    out = self.model(**tokens)
+                    mask = tokens["attention_mask"].unsqueeze(-1).expand(out[0].size()).float()
+                    sum_emb = torch.sum(out[0] * mask, dim=1)
+                    sum_mask = torch.clamp(mask.sum(dim=1), min=1e-9)
+                    mean_pooled = (sum_emb / sum_mask).cpu().numpy()
+                    embs_bloque[indices_lote] = mean_pooled
+
+                embs_list.append(embs_bloque)
+
                 t_transcurrido = time.time() - t_inicio
-                seg_por_lote = t_transcurrido / max(idx_rel, 1)
-                lotes_restantes = total_lotes - idx_lote
-                min_restantes = (seg_por_lote * lotes_restantes) / 60.0
-                textos_procesados = min(i + batch_size, total_textos)
-                porcentaje = (textos_procesados / total_textos) * 100.0
-                velocidad = (textos_procesados - offset_textos) / max(t_transcurrido, 1e-6)
+                procesados_nuevos = max(fin_bloque - offset_textos, 1)
+                restantes = total_textos - fin_bloque
+                min_restantes = ((t_transcurrido / procesados_nuevos) * restantes) / 60.0
+                porcentaje = (fin_bloque / total_textos) * 100.0
+                velocidad = procesados_nuevos / max(t_transcurrido, 1e-6)
+                idx_lote = (fin_bloque + batch_size - 1) // batch_size
 
-                if idx_lote % 2 == 0 or idx_lote == total_lotes:
-                    print(
-                        f"  [{desc}] Lote {idx_lote:>3}/{total_lotes} ({porcentaje:>5.1f}%) | "
-                        f"{textos_procesados:>5}/{total_textos} textos | "
-                        f"Velocidad: {velocidad:.1f} txt/s | "
-                        f"Transcurrido: {t_transcurrido/60.0:.1f}m | Restante estimado: ~{min_restantes:.1f}m",
-                        flush=True
-                    )
+                print(
+                    f"  [{desc}] Lote {idx_lote:>3}/{total_lotes} ({porcentaje:>5.1f}%) | "
+                    f"{fin_bloque:>5}/{total_textos} textos | "
+                    f"Velocidad: {velocidad:.1f} txt/s | "
+                    f"Transcurrido: {t_transcurrido/60.0:.1f}m | Restante estimado: ~{min_restantes:.1f}m",
+                    flush=True
+                )
 
-                # Guardar checkpoint cada guardar_cada_n_lotes (5 por defecto)
-                if ruta_checkpoint and (idx_rel % guardar_cada_n_lotes == 0 or idx_lote == total_lotes):
+                if ruta_checkpoint:
                     embs_consolidados = np.vstack(embs_list)
                     np.save(ruta_checkpoint, embs_consolidados)
                     print(
-                        f"    -> [CHECKPOINT CADA {guardar_cada_n_lotes} LOTES] Guardados {len(embs_consolidados)}/{total_textos} fragmentos en {Path(ruta_checkpoint).name}",
+                        f"    -> [CHECKPOINT] Guardados {len(embs_consolidados)}/{total_textos} fragmentos en {Path(ruta_checkpoint).name}",
                         flush=True
                     )
-                    embs_list = [embs_consolidados]  # mantener lista compacta
+                    embs_list = [embs_consolidados]
 
         embs_finales = np.vstack(embs_list) if embs_list else np.empty((0, 768), dtype=np.float32)
         if ruta_checkpoint:

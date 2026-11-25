@@ -1,41 +1,200 @@
 """
-Estudio empírico de mejoras sobre el clasificador híbrido y análisis de métricas avanzadas (ROC-AUC, PR-AUC).
+Estudio empírico de mejoras exclusivas con Support Vector Machines (SVM) sobre el clasificador híbrido.
 Auditado bajo AUDITORIA_DOCENTE.md:
-  - Cero data leakage (Dev para calibración, Test solo para evaluación final).
-  - Justificación formal de variables y funciones de pérdida.
+  - Cero data leakage (TF-IDF, clustering, escalado/L2, selección de hiperparámetros y umbrales en Train/Dev; Test ciego).
+  - Uso exclusivo de SVM (LinearSVC, SVC con kernel RBF y descomposición Ordinal Frank & Hall).
   - Multi-semilla [42, 43, 44, 45, 46] con media +/- desviación estándar.
+
+Precondiciones:
+  - Corpus CSV y representaciones MentalBERT en caché disponibles.
+Postcondiciones:
+  - Imprime tabla comparativa en consola con Accuracy, Macro-F1, Weighted-F1, F1-Attempt,
+    Quadratic Kappa, ROC-AUC, PR-AUC y costes computacionales.
+Complejidad:
+  - Temporal: O(M * S * N_tr * D) donde M=8 configuraciones SVM, S=5 semillas.
+  - Espacial: O(N * D).
 """
 
 import sys
 from pathlib import Path
-import json
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
-from sklearn.svm import LinearSVC
-from sklearn.linear_model import LogisticRegression
+from scipy.spatial.distance import cdist
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_selection import SelectKBest, chi2
-from sklearn.cluster import AgglomerativeClustering
-from scipy.spatial.distance import cdist
-from sklearn.metrics import (
-    f1_score,
-    recall_score,
-    precision_score,
-    balanced_accuracy_score,
-    cohen_kappa_score,
-    roc_auc_score,
-    average_precision_score
-)
+from sklearn.metrics import f1_score, precision_score
+from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.preprocessing import StandardScaler, normalize
+from sklearn.svm import SVC, LinearSVC
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.modulo_comun_equipo import cargar_particion_oficial_equipo, RUTA_CSV_DEFECTO, limpiar_texto_reddit
 from src.extraccion_mentalbert import MentalBertHierarchicalExtractor
+from src.metricas_clasificacion import (
+    CLASES_ORDEN_CSSRS,
+    construir_espacio_hibrido,
+    evaluar_predicciones_clinicas,
+    perfilar_entrenamiento_e_inferencia,
+    resumir_metricas_multirun,
+)
+from src.modulo_comun_equipo import RUTA_CSV_DEFECTO, cargar_particion_oficial_equipo, limpiar_texto_reddit
 
-def main():
-    semillas = [42, 43, 44, 45, 46]
+
+class OrdinalSVMClassifier:
+    """
+    Clasificador SVM Ordinal mediante descomposición acumulativa de Frank & Hall (2001).
+    Entrena K-1 clasificadores binarios calibrados para estimar P(y > k), k = 0..K-2,
+    explotando la estructura ordinal de la escala C-SSRS:
+        Supportive (0) < Indicator (1) < Ideation (2) < Behavior (3) < Attempt (4).
+
+    Precondiciones:
+        - `clases_orden` lista las K clases en orden estricto ascendente de severidad.
+    Complejidad:
+        - Temporal: O((K-1) * T_fit_svm_calibrado).
+    """
+
+    def __init__(self, clases_orden: List[str], C: float = 1.0, class_weight: Optional[str] = "balanced", random_state: int = 42):
+        self.clases_orden = list(clases_orden)
+        self.C = C
+        self.class_weight = class_weight
+        self.random_state = random_state
+        self.classes_ = np.array(self.clases_orden)
+        self.clasificadores_: List[Any] = []
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "OrdinalSVMClassifier":
+        mapa_idx = {c: i for i, c in enumerate(self.clases_orden)}
+        y_ord = np.array([mapa_idx[val] for val in y], dtype=int)
+        self.clasificadores_ = []
+
+        for k in range(len(self.clases_orden) - 1):
+            y_bin = (y_ord > k).astype(int)
+            base_svm = LinearSVC(
+                C=self.C,
+                class_weight=self.class_weight,
+                random_state=self.random_state,
+                max_iter=5000,
+                dual=False,
+            )
+            cal = CalibratedClassifierCV(base_svm, cv=3, method="sigmoid")
+            cal.fit(X, y_bin)
+            self.clasificadores_.append(cal)
+        return self
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        n = X.shape[0]
+        k_tot = len(self.clases_orden)
+        p_mayor = np.column_stack([clf.predict_proba(X)[:, 1] for clf in self.clasificadores_])
+
+        probs = np.zeros((n, k_tot), dtype=float)
+        probs[:, 0] = 1.0 - p_mayor[:, 0]
+        for k in range(1, k_tot - 1):
+            probs[:, k] = np.clip(p_mayor[:, k - 1] - p_mayor[:, k], 0.0, 1.0)
+        probs[:, k_tot - 1] = p_mayor[:, k_tot - 2]
+
+        suma = probs.sum(axis=1, keepdims=True)
+        probs = np.where(suma > 0.0, probs / suma, 1.0 / k_tot)
+        return probs
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        probs = self.predict_proba(X)
+        return self.classes_[np.argmax(probs, axis=1)]
+
+
+def _construir_hibrido_multiclase_l2(
+    X_mb_tr: np.ndarray,
+    X_mb_dev: np.ndarray,
+    X_mb_te: np.ndarray,
+    textos_tr: np.ndarray,
+    textos_dev: np.ndarray,
+    textos_te: np.ndarray,
+    y_tr: np.ndarray,
+    k_tfidf: int = 200,
+    peso_tfidf: float = 0.5,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Construye espacio híbrido con normalización L2 independiente por bloque y selección
+    chi2 multiclase (sobre las 5 clases C-SSRS) ajustada exclusivamente en Train.
+    """
+    X_mb_tr_n = normalize(X_mb_tr, norm="l2")
+    X_mb_dev_n = normalize(X_mb_dev, norm="l2")
+    X_mb_te_n = normalize(X_mb_te, norm="l2")
+
+    vec = TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_df=0.8, sublinear_tf=True)
+    X_tf_tr = vec.fit_transform(textos_tr)
+    X_tf_dev = vec.transform(textos_dev)
+    X_tf_te = vec.transform(textos_te)
+
+    k_ef = min(k_tfidf, X_tf_tr.shape[1])
+    sel = SelectKBest(chi2, k=k_ef)
+    X_sel_tr = normalize(sel.fit_transform(X_tf_tr, y_tr).toarray(), norm="l2")
+    X_sel_dev = normalize(sel.transform(X_tf_dev).toarray(), norm="l2")
+    X_sel_te = normalize(sel.transform(X_tf_te).toarray(), norm="l2")
+
+    X_tr = normalize(np.hstack([X_mb_tr_n, X_sel_tr * peso_tfidf]), norm="l2")
+    X_dev = normalize(np.hstack([X_mb_dev_n, X_sel_dev * peso_tfidf]), norm="l2")
+    X_te = normalize(np.hstack([X_mb_te_n, X_sel_te * peso_tfidf]), norm="l2")
+    return X_tr, X_dev, X_te
+
+
+def _seleccionar_rbf_cv_train(
+    X_tr: np.ndarray,
+    y_tr: np.ndarray,
+    seed: int = 42,
+) -> Tuple[float, Any]:
+    """
+    Selecciona (C*, gamma*) para SVC(kernel='rbf') mediante validación cruzada
+    estratificada 5-fold exclusivamente sobre Train sobre rejilla logarítmica.
+    """
+    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=seed)
+    mejor_sc = -1.0
+    mejor_par: Tuple[float, Any] = (1.0, "scale")
+
+    for c_val in (0.3162, 1.0, 3.1623):
+        for g_val in ("scale", 0.01, 0.1):
+            clf = SVC(C=c_val, kernel="rbf", gamma=g_val, class_weight="balanced", random_state=seed)
+            sc = float(cross_val_score(clf, X_tr, y_tr, cv=skf, scoring="f1_macro").mean())
+            if sc > mejor_sc:
+                mejor_sc = sc
+                mejor_par = (c_val, g_val)
+    return mejor_par
+
+
+def _calibrar_umbral_con_precision_min(
+    scores_dev: np.ndarray,
+    y_dev: np.ndarray,
+    prec_min: float = 0.25,
+    clase_critica: str = "Attempt",
+) -> float:
+    """
+    Calibra theta* en Dev maximizando F1_dev(Attempt) sujeto a Precision_dev >= prec_min
+    para evitar colapsos de Accuracy por exceso de falsos positivos.
+    """
+    y_dev_bin = (np.asarray(y_dev) == clase_critica).astype(int)
+    umbrales = np.linspace(float(np.min(scores_dev)), float(np.max(scores_dev)), 100)
+    mejor_th = float(np.max(scores_dev)) + 1.0
+    mejor_f1 = -1.0
+
+    for th in umbrales:
+        pred_bin = (scores_dev >= th).astype(int)
+        if np.sum(pred_bin) == 0:
+            continue
+        prec = precision_score(y_dev_bin, pred_bin, zero_division=0)
+        if prec >= prec_min:
+            f1_d = f1_score(y_dev_bin, pred_bin, zero_division=0)
+            if f1_d > mejor_f1:
+                mejor_f1 = float(f1_d)
+                mejor_th = float(th)
+    return mejor_th
+
+
+def ejecutar_experimento_mejoras(semillas: List[int] = [42, 43, 44, 45, 46]) -> pd.DataFrame:
+    """Ejecuta la comparativa de mejoras exclusivas con SVM (cero Regresión Logística)."""
     extractor = MentalBertHierarchicalExtractor()
     rep_dict = extractor.obtener_o_generar_representaciones()
 
@@ -50,177 +209,137 @@ def main():
             "dev": (p["idx"][1], p["y"][1]),
             "te": (p["idx"][2], p["y"][2]),
             "X384": p["X_384"],
-            "clases": list(p["clases"])
         }
 
-    clases = particiones[42]["clases"]
-    idx_att = clases.index("Attempt")
     nombre_attempt = "Attempt"
+    print("=" * 120)
+    print("COMPARATIVA DE ARQUITECTURAS Y MEJORAS EXCLUSIVAS CON SVM (CERO REGRESIÓN LOGÍSTICA)")
+    print("=" * 120)
 
-    print("=" * 100)
-    print("COMPARATIVA DE ARQUITECTURAS Y MEJORAS PROPUESTAS")
-    print("=" * 100)
-
-    # Configuraciones a explorar:
-    # 1. Hibrido Truncado + LinearSVC
-    # 2. Hibrido Mean-Mean + LinearSVC
-    # 3. Hibrido Mean-Mean + Clustering Features + LinearSVC
-    # 4. Hibrido Mean-Mean + LogisticRegression (con probas y ROC-AUC)
-    # 5. Hibrido Mean-Mean + LogisticRegression con Calibración de Umbral en Dev (theta*)
-
-    configuraciones = [
-        {"nombre": "1. Híbrido Truncado + LinearSVC (Simétrico)", "tipo_emb": "plano_truncado", "clf": "svm", "pesos": None, "cluster": False, "umbral_dev": False},
-        {"nombre": "2. Híbrido Jerárquico Mean-Mean + LinearSVC (Simétrico)", "tipo_emb": "mean_mean", "clf": "svm", "pesos": None, "cluster": False, "umbral_dev": False},
-        {"nombre": "3. Híbrido Jerárquico Mean-Mean + LinearSVC (Balanced)", "tipo_emb": "mean_mean", "clf": "svm", "pesos": "balanced", "cluster": False, "umbral_dev": False},
-        {"nombre": "4. Híbrido Jerárquico + Features Clustering + LinearSVC", "tipo_emb": "mean_mean", "clf": "svm", "pesos": None, "cluster": True, "umbral_dev": False},
-        {"nombre": "5. Híbrido Jerárquico Mean-Mean + LogReg (Simétrico)", "tipo_emb": "mean_mean", "clf": "logreg", "pesos": None, "cluster": False, "umbral_dev": False},
-        {"nombre": "6. Híbrido Jerárquico Mean-Mean + LogReg (Balanced)", "tipo_emb": "mean_mean", "clf": "logreg", "pesos": "balanced", "cluster": False, "umbral_dev": False},
-        {"nombre": "7. Híbrido Jerárquico + LogReg + Umbral F1-Dev", "tipo_emb": "mean_mean", "clf": "logreg", "pesos": None, "cluster": False, "umbral_dev": "f1"},
-        {"nombre": "8. Híbrido Jerárquico + LogReg + Umbral Recall85-Dev", "tipo_emb": "mean_mean", "clf": "logreg", "pesos": None, "cluster": False, "umbral_dev": "rec85"},
+    configuraciones: List[Dict[str, Any]] = [
+        {"nombre": "1. Híbrido Truncado + LinearSVC (Simétrico)", "modo": "base", "tipo_emb": "plano_truncado", "pesos": None, "cluster": False},
+        {"nombre": "2. Híbrido Mean-Mean + LinearSVC (Simétrico)", "modo": "base", "tipo_emb": "mean_mean", "pesos": None, "cluster": False},
+        {"nombre": "3. Híbrido Mean-Mean + LinearSVC (Balanced)", "modo": "base", "tipo_emb": "mean_mean", "pesos": "balanced", "cluster": False},
+        {"nombre": "4. Híbrido + Clustering Ward 384D + LinearSVC", "modo": "base", "tipo_emb": "mean_mean", "pesos": None, "cluster": True},
+        {"nombre": "5. [Mean+Max] + TF-IDF chi2 Multi + L2 + LinearSVC", "modo": "l2_multi_lin", "pesos": "balanced"},
+        {"nombre": "6. Mean-Mean + TF-IDF + SVD(64) + SVC(RBF CV)", "modo": "l2_multi_rbf", "pesos": "balanced"},
+        {"nombre": "7. Mean-Mean + TF-IDF chi2 Multi + L2 + SVM Ordinal", "modo": "l2_multi_ord", "pesos": "balanced"},
+        {"nombre": "8. Mean-Mean + TF-IDF + L2 + LinearSVC + Umbral Dev (Prec>=0.25)", "modo": "l2_multi_lin_th", "pesos": "balanced"},
     ]
 
     resultados_totales = []
 
     for cfg in configuraciones:
-        runs_f1_att = []
-        runs_rec_att = []
-        runs_prec_att = []
-        runs_macro_f1 = []
-        runs_kappa = []
-        runs_roc_auc = []
-        runs_pr_auc = []
+        metricas_por_semilla = []
 
         for s in semillas:
             idx_tr, y_tr = particiones[s]["tr"]
             idx_dev, y_dev = particiones[s]["dev"]
             idx_te, y_te = particiones[s]["te"]
 
-            # 1. Base Dense Embedding
-            emb_base = rep_dict[cfg["tipo_emb"]]
-            X_emb_tr = emb_base[idx_tr]
-            X_emb_dev = emb_base[idx_dev]
-            X_emb_te = emb_base[idx_te]
+            if cfg["modo"] == "base":
+                emb_base = rep_dict[cfg["tipo_emb"]]
+                X_tr, X_dev, X_te = construir_espacio_hibrido(
+                    emb_base[idx_tr], emb_base[idx_dev], emb_base[idx_te],
+                    textos_raw[idx_tr], textos_raw[idx_dev], textos_raw[idx_te],
+                    y_tr, clase_critica=nombre_attempt, k_tfidf=100, alpha=2.0, solo_tfidf=False,
+                )
 
-            # 2. TF-IDF Crítico ajustado estrictamente en Train
-            vec = TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_df=0.8, sublinear_tf=True)
-            X_tfidf_tr = vec.fit_transform(textos_raw[idx_tr])
-            X_tfidf_dev = vec.transform(textos_raw[idx_dev])
-            X_tfidf_te = vec.transform(textos_raw[idx_te])
+                if cfg["cluster"]:
+                    X384_tr, X384_dev, X384_te = particiones[s]["X384"]
+                    clust = AgglomerativeClustering(n_clusters=5, linkage="ward")
+                    labels_tr = clust.fit_predict(X384_tr)
+                    centroides = np.array([X384_tr[labels_tr == k].mean(axis=0) for k in range(5)])
 
-            selector = SelectKBest(chi2, k=100)
-            X_sel_tr = selector.fit_transform(X_tfidf_tr, y_tr == nombre_attempt).toarray()
-            X_sel_dev = selector.transform(X_tfidf_dev).toarray()
-            X_sel_te = selector.transform(X_tfidf_te).toarray()
+                    dist_tr = cdist(X384_tr, centroides, metric="euclidean")
+                    dist_dev = cdist(X384_dev, centroides, metric="euclidean")
+                    dist_te = cdist(X384_te, centroides, metric="euclidean")
+                    media_d = float(dist_tr.mean())
+                    if media_d > 0.0:
+                        dist_tr /= media_d
+                        dist_dev /= media_d
+                        dist_te /= media_d
 
-            X_tr = np.hstack([X_emb_tr, X_sel_tr * 2.0])
-            X_dev = np.hstack([X_emb_dev, X_sel_dev * 2.0])
-            X_te = np.hstack([X_emb_te, X_sel_te * 2.0])
+                    X_tr = np.hstack([X_tr, dist_tr])
+                    X_dev = np.hstack([X_dev, dist_dev])
+                    X_te = np.hstack([X_te, dist_te])
 
-            # 3. Features de clustering si procede
-            if cfg["cluster"]:
-                # Clustering jerárquico ajustado en Train sobre X384
-                X384_tr, X384_dev, X384_te = particiones[s]["X384"]
-                clust = AgglomerativeClustering(n_clusters=5, linkage="ward")
-                labels_tr = clust.fit_predict(X384_tr)
-                centroides = np.array([X384_tr[labels_tr == k].mean(axis=0) for k in range(5)])
+                def _crear_lin(seed_val: int = s, w_val: Any = cfg["pesos"]) -> LinearSVC:
+                    return LinearSVC(C=1.0, class_weight=w_val, random_state=seed_val, max_iter=5000, dual=False)
 
-                # Distancias euclídeas a los 5 centroides
-                dist_tr = cdist(X384_tr, centroides, metric="euclidean")
-                dist_dev = cdist(X384_dev, centroides, metric="euclidean")
-                dist_te = cdist(X384_te, centroides, metric="euclidean")
+                clf, y_pred_te, costes = perfilar_entrenamiento_e_inferencia(_crear_lin, X_tr, y_tr, X_te)
+                idx_att_clf = list(clf.classes_).index(nombre_attempt)
+                scores_att_te = clf.decision_function(X_te)[:, idx_att_clf]
 
-                # Normalizar distancias por media de Train
-                media_d = dist_tr.mean()
-                dist_tr /= media_d
-                dist_dev /= media_d
-                dist_te /= media_d
-
-                X_tr = np.hstack([X_tr, dist_tr])
-                X_dev = np.hstack([X_dev, dist_dev])
-                X_te = np.hstack([X_te, dist_te])
-
-            # 4. Clasificador
-            if cfg["clf"] == "svm":
-                clf = LinearSVC(C=1.0, class_weight=cfg["pesos"], random_state=s, max_iter=3000, dual="auto")
-                clf.fit(X_tr, y_tr)
-                y_pred_te = clf.predict(X_te)
-                # Para SVM, decisión function para ROC-AUC one-vs-rest
-                dec_te = clf.decision_function(X_te)
-                prob_att_te = dec_te[:, idx_att]
             else:
-                clf = LogisticRegression(C=1.0, class_weight=cfg["pesos"], random_state=s, max_iter=3000, solver="lbfgs")
-                clf.fit(X_tr, y_tr)
-                prob_dev = clf.predict_proba(X_dev)
-                prob_te = clf.predict_proba(X_te)
-                prob_att_dev = prob_dev[:, idx_att]
-                prob_att_te = prob_te[:, idx_att]
+                emb_base_m = np.hstack([rep_dict["mean_mean"], rep_dict["max_mean"]]) if cfg["modo"] == "l2_multi_lin" else rep_dict["mean_mean"]
+                X_tr, X_dev, X_te = _construir_hibrido_multiclase_l2(
+                    emb_base_m[idx_tr], emb_base_m[idx_dev], emb_base_m[idx_te],
+                    textos_raw[idx_tr], textos_raw[idx_dev], textos_raw[idx_te],
+                    y_tr, k_tfidf=200, peso_tfidf=0.5,
+                )
 
-                if cfg["umbral_dev"] == "f1":
-                    # Calibrar umbral theta en Dev para maximizar F1 de Attempt
-                    umbrales = np.linspace(0.05, 0.60, 56)
-                    best_th = 0.20
-                    best_f1_dev = -1.0
-                    y_dev_bin = (y_dev == nombre_attempt).astype(int)
-                    for th in umbrales:
-                        pred_dev_bin = (prob_att_dev >= th).astype(int)
-                        f1_d = f1_score(y_dev_bin, pred_dev_bin, zero_division=0)
-                        if f1_d > best_f1_dev:
-                            best_f1_dev = f1_d
-                            best_th = th
-                    # Aplicar umbral en Test
-                    y_pred_te = clf.predict(X_te)
-                    idx_forzar = np.where(prob_att_te >= best_th)[0]
-                    y_pred_te[idx_forzar] = nombre_attempt
-                elif cfg["umbral_dev"] == "rec85":
-                    # Calibrar umbral theta en Dev para garantizar Recall >= 0.85
-                    umbrales = np.linspace(0.01, 0.50, 100)
-                    best_th = 0.10
-                    y_dev_bin = (y_dev == nombre_attempt).astype(int)
-                    for th in reversed(umbrales):
-                        pred_dev_bin = (prob_att_dev >= th).astype(int)
-                        rec_d = recall_score(y_dev_bin, pred_dev_bin, zero_division=0)
-                        if rec_d >= 0.85:
-                            best_th = th
-                            break
-                    y_pred_te = clf.predict(X_te)
-                    idx_forzar = np.where(prob_att_te >= best_th)[0]
-                    y_pred_te[idx_forzar] = nombre_attempt
-                else:
-                    y_pred_te = clf.predict(X_te)
+                if cfg["modo"] in ("l2_multi_lin", "l2_multi_lin_th"):
+                    def _crear_lin_n(seed_val: int = s) -> LinearSVC:
+                        return LinearSVC(C=0.3162, class_weight="balanced", random_state=seed_val, max_iter=5000, dual=False)
 
-            f1_att = f1_score(y_te, y_pred_te, labels=[nombre_attempt], average="macro", zero_division=0)
-            rec_att = recall_score(y_te, y_pred_te, labels=[nombre_attempt], average="macro", zero_division=0)
-            prec_att = precision_score(y_te, y_pred_te, labels=[nombre_attempt], average="macro", zero_division=0)
-            macro_f1 = f1_score(y_te, y_pred_te, average="macro", zero_division=0)
-            kappa = cohen_kappa_score(y_te, y_pred_te, weights="quadratic")
+                    clf, y_pred_base, costes = perfilar_entrenamiento_e_inferencia(_crear_lin_n, X_tr, y_tr, X_te)
+                    idx_att_clf = list(clf.classes_).index(nombre_attempt)
+                    scores_att_te = clf.decision_function(X_te)[:, idx_att_clf]
 
-            y_te_bin = (y_te == nombre_attempt).astype(int)
-            roc_auc = roc_auc_score(y_te_bin, prob_att_te)
-            pr_auc = average_precision_score(y_te_bin, prob_att_te)
+                    if cfg["modo"] == "l2_multi_lin_th":
+                        scores_dev = clf.decision_function(X_dev)[:, idx_att_clf]
+                        th_seguro = _calibrar_umbral_con_precision_min(scores_dev, y_dev, prec_min=0.25, clase_critica=nombre_attempt)
+                        y_pred_te = y_pred_base.copy()
+                        y_pred_te[scores_att_te >= th_seguro] = nombre_attempt
+                    else:
+                        y_pred_te = y_pred_base
 
-            runs_f1_att.append(f1_att)
-            runs_rec_att.append(rec_att)
-            runs_prec_att.append(prec_att)
-            runs_macro_f1.append(macro_f1)
-            runs_kappa.append(kappa)
-            runs_roc_auc.append(roc_auc)
-            runs_pr_auc.append(pr_auc)
+                elif cfg["modo"] == "l2_multi_rbf":
+                    # Reducción SVD + escalado estrictamente ajustados en Train para evitar maldición de dimensionalidad en RBF
+                    svd = TruncatedSVD(n_components=64, random_state=s)
+                    scaler = StandardScaler()
+                    X_tr_r = scaler.fit_transform(svd.fit_transform(X_tr))
+                    X_te_r = scaler.transform(svd.transform(X_te))
+                    c_opt, g_opt = _seleccionar_rbf_cv_train(X_tr_r, y_tr, seed=s)
 
-        res = {
-            "Configuracion": cfg["nombre"],
-            "F1_Seed42": runs_f1_att[0],
-            "F1_mean": np.mean(runs_f1_att),
-            "F1_std": np.std(runs_f1_att),
-            "Rec_mean": np.mean(runs_rec_att),
-            "Prec_mean": np.mean(runs_prec_att),
-            "Macro_mean": np.mean(runs_macro_f1),
-            "Kappa_mean": np.mean(runs_kappa),
-            "ROC_AUC_mean": np.mean(runs_roc_auc),
-            "PR_AUC_mean": np.mean(runs_pr_auc),
-        }
+                    def _crear_rbf(c_v: float = c_opt, g_v: Any = g_opt, seed_val: int = s) -> SVC:
+                        return SVC(C=c_v, kernel="rbf", gamma=g_v, class_weight="balanced", random_state=seed_val)
+
+                    clf, y_pred_te, costes = perfilar_entrenamiento_e_inferencia(_crear_rbf, X_tr_r, y_tr, X_te_r)
+                    idx_att_clf = list(clf.classes_).index(nombre_attempt)
+                    scores_att_te = clf.decision_function(X_te_r)[:, idx_att_clf]
+
+                else:  # l2_multi_ord
+                    def _crear_ord(seed_val: int = s) -> OrdinalSVMClassifier:
+                        return OrdinalSVMClassifier(CLASES_ORDEN_CSSRS, C=0.3162, class_weight="balanced", random_state=seed_val)
+
+                    clf, y_pred_te, costes = perfilar_entrenamiento_e_inferencia(_crear_ord, X_tr, y_tr, X_te)
+                    idx_att_clf = list(clf.classes_).index(nombre_attempt)
+                    scores_att_te = clf.predict_proba(X_te)[:, idx_att_clf]
+
+            m_te = evaluar_predicciones_clinicas(
+                y_true=y_te,
+                y_pred=y_pred_te,
+                clases_orden=CLASES_ORDEN_CSSRS,
+                y_scores_attempt=scores_att_te,
+                clase_critica=nombre_attempt,
+            )
+            m_te.update(costes)
+            metricas_por_semilla.append(m_te)
+
+        res = resumir_metricas_multirun(metricas_por_semilla, clases_orden=CLASES_ORDEN_CSSRS)
+        res["Configuracion"] = cfg["nombre"]
         resultados_totales.append(res)
-        print(f"{cfg['nombre']:<62} | F1(s42): {res['F1_Seed42']:.3f} | F1(μ): {res['F1_mean']:.3f}±{res['F1_std']:.3f} | Rec: {res['Rec_mean']:.3f} | Prec: {res['Prec_mean']:.3f} | Macro: {res['Macro_mean']:.3f} | ROC-AUC: {res['ROC_AUC_mean']:.3f} | PR-AUC: {res['PR_AUC_mean']:.3f}")
+        print(
+            f"{cfg['nombre']:<60} | Acc: {res['Accuracy_mean']:.3f} | w-F1: {res['Weighted_F1_mean']:.3f} | "
+            f"Macro: {res['Macro_F1_mean']:.3f} | F1-Att(42): {res['F1_Attempt_seed42']:.3f} | "
+            f"F1-Att(μ): {res['F1_Attempt_mean']:.3f}±{res['F1_Attempt_std']:.3f} | "
+            f"Rec: {res['Recall_Attempt_mean']:.3f} | Kap: {res['Quadratic_Kappa_mean']:.3f}"
+        )
+
+    return pd.DataFrame(resultados_totales)
+
 
 if __name__ == "__main__":
-    main()
-
+    ejecutar_experimento_mejoras()

@@ -24,6 +24,7 @@ if hasattr(sys.stderr, "reconfigure"):
 RANDOM_SEED = 42
 RUTA_CSV_DEFECTO = "data/500_Reddit_users_posts_labels.csv"
 RUTA_CACHE_384D = "data/embeddings_384d_comun.npy"
+_CACHE_CORPUS_EQUIPO = {}
 
 
 def limpiar_texto_reddit(val):
@@ -45,21 +46,27 @@ def cargar_particion_oficial_equipo(ruta_csv=RUTA_CSV_DEFECTO, ruta_cache_emb=RU
     Postcondición: Devuelve un diccionario con los textos, los embeddings 384D y las etiquetas `y`
     exactamente divididos en 70% Train (350), 15% Dev (75) y 15% Test (75) con `stratify=y` y `seed=42`.
     """
-    df = pd.read_csv(ruta_csv)
-    textos = np.array(df["Post"].fillna("").apply(limpiar_texto_reddit).tolist())
-    y = np.array(df["Label"].astype(str).tolist())
-    usuarios = np.array(df["User"].astype(str).tolist())
+    clave_cache = (str(ruta_csv), str(ruta_cache_emb))
+    if clave_cache not in _CACHE_CORPUS_EQUIPO:
+        df = pd.read_csv(ruta_csv)
+        textos = np.array(df["Post"].fillna("").apply(limpiar_texto_reddit).tolist())
+        y = np.array(df["Label"].astype(str).tolist())
+        usuarios = np.array(df["User"].astype(str).tolist())
 
-    # Cargar o generar los Embeddings 384D comunes para todo el equipo
-    if os.path.exists(ruta_cache_emb):
-        X_384d = np.load(ruta_cache_emb)
-    else:
-        from sentence_transformers import SentenceTransformer
-        print("[*] Calculando Embeddings 384D comunes (all-MiniLM-L6-v2)...")
-        modelo_st = SentenceTransformer("all-MiniLM-L6-v2")
-        X_384d = modelo_st.encode(textos.tolist(), show_progress_bar=True)
-        os.makedirs(os.path.dirname(ruta_cache_emb), exist_ok=True)
-        np.save(ruta_cache_emb, X_384d)
+        # Cargar o generar los Embeddings 384D comunes para todo el equipo
+        if os.path.exists(ruta_cache_emb):
+            X_384d = np.load(ruta_cache_emb)
+        else:
+            from sentence_transformers import SentenceTransformer
+            print("[*] Calculando Embeddings 384D comunes (all-MiniLM-L6-v2)...")
+            modelo_st = SentenceTransformer("all-MiniLM-L6-v2")
+            X_384d = modelo_st.encode(textos.tolist(), show_progress_bar=True)
+            os.makedirs(os.path.dirname(ruta_cache_emb), exist_ok=True)
+            np.save(ruta_cache_emb, X_384d)
+
+        _CACHE_CORPUS_EQUIPO[clave_cache] = (usuarios, textos, y, X_384d)
+
+    usuarios, textos, y, X_384d = _CACHE_CORPUS_EQUIPO[clave_cache]
 
     indices = np.arange(len(y))
 
