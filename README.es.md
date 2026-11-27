@@ -1,6 +1,6 @@
 🌐 **Language / Idioma:** [English](README.md) • [Español](README.es.md)
 
-# text-classification-MD: Clasificación Supervisada de Riesgo Clínico en Texto (Reddit C-SSRS)
+# clinical-risk-nlp: Clasificación Supervisada de Riesgo Clínico en Texto (Reddit C-SSRS)
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-LinearSVC-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
@@ -56,7 +56,7 @@ flowchart LR
 ## 📁 Estructura del Proyecto
 
 ```text
-text-classification-MD/
+clinical-risk-nlp/
 │
 ├── data/                                 # Datos crudos (excluidos de Git por NDA)
 │   ├── .gitkeep
@@ -149,8 +149,8 @@ Para las tablas completas por clase (`Supportive`..`Attempt`), curvas ROC/PR-AUC
 
 1. Clonar el repositorio:
    ```bash
-   git clone https://github.com/aimarlarriba/text-classification-MD.git
-   cd text-classification-MD
+   git clone https://github.com/aimarlarriba/clinical-risk-nlp.git
+   cd clinical-risk-nlp
    ```
 
 2. Crear y activar un entorno virtual:

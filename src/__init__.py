@@ -1,5 +1,5 @@
 """
-Paquete principal de text-classification-MD:
+Paquete principal de clinical-risk-nlp:
 Clasificación supervisada multiclase desbalanceada sobre el corpus clínico Reddit C-SSRS (N=500).
 
 Módulos principales del pipeline supervisado:

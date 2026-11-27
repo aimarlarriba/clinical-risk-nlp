@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # Script de ejecución de pipeline para Windows PowerShell
 # Tarea: Clasificación Supervisada de Texto (Corpus Reddit C-SSRS, N=500)
 # ==============================================================================
@@ -11,7 +11,7 @@ param (
 )
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host " text-classification-MD: Ejecutor de Pipeline PowerShell" -ForegroundColor Cyan
+Write-Host " clinical-risk-nlp: Ejecutor de Pipeline PowerShell" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
 $pythonCmd = "python"

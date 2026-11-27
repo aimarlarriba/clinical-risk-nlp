@@ -1,6 +1,6 @@
 🌐 **Language / Idioma:** [English](README.md) • [Español](README.es.md)
 
-# text-classification-MD: Supervised Clinical Risk Classification on Reddit (C-SSRS)
+# clinical-risk-nlp: Supervised Clinical Risk Classification on Reddit (C-SSRS)
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-LinearSVC-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
@@ -56,7 +56,7 @@ flowchart LR
 ## 📁 Project Structure
 
 ```text
-text-classification-MD/
+clinical-risk-nlp/
 │
 ├── data/                                 # Raw data (excluded from Git under NDA)
 │   ├── .gitkeep
@@ -149,8 +149,8 @@ See [`INFORME_CIENTIFICO_C-SSRS.md`](./INFORME_CIENTIFICO_C-SSRS.md) for per-cla
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/aimarlarriba/text-classification-MD.git
-   cd text-classification-MD
+   git clone https://github.com/aimarlarriba/clinical-risk-nlp.git
+   cd clinical-risk-nlp
    ```
 
 2. Create and activate a virtual environment:
