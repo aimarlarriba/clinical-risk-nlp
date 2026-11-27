@@ -1,5 +1,5 @@
 """
-clinical-risk-nlp: Orquestador Principal del Pipeline de Clasificación Supervisada
+clinical-risk-nl: Orquestador Principal del Pipeline de Clasificación Supervisada
 ========================================================================================
 Asignatura: Minería de Datos / Aprendizaje Supervisado (UPV/EHU)
 Tarea: Clasificación supervisada de texto sobre el Corpus Clínico Reddit C-SSRS (N=500).

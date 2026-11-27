@@ -1,5 +1,5 @@
 """
-Configuración centralizada del proyecto clinical-risk-nlp.
+Configuración centralizada del proyecto clinical-risk-nl.
 Define rutas absolutas reproducibles, hiperparámetros por defecto
 y el mapeo ordinal de la escala clínica C-SSRS (Gaur et al., 2019).
 """

@@ -11,7 +11,7 @@ param (
 )
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host " clinical-risk-nlp: Ejecutor de Pipeline PowerShell" -ForegroundColor Cyan
+Write-Host " clinical-risk-nl: Ejecutor de Pipeline PowerShell" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
 $pythonCmd = "python"
