@@ -1,156 +1,159 @@
-# text-classification-MD: Clasificación Supervisada de Riesgo Clínico en Texto (Reddit C-SSRS)
+🌐 **Language / Idioma:** [English](README.md) • [Español](README.es.md)
+
+# text-classification-MD: Supervised Clinical Risk Classification on Reddit (C-SSRS)
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-LinearSVC-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
 [![Transformers](https://img.shields.io/badge/HuggingFace-MentalBERT-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black)](https://huggingface.co/mental/mental-bert-base-uncased)
-[![UPV/EHU](https://img.shields.io/badge/UPV%2FEHU-Miner%C3%ADa%20de%20Datos-1e3a8a?style=for-the-badge)](https://www.ehu.eus/)
+[![UPV/EHU](https://img.shields.io/badge/UPV%2FEHU-Data%20Mining-1e3a8a?style=for-the-badge)](https://www.ehu.eus/)
 
-> **Proyecto de Minería de Datos / Aprendizaje Supervisado (UPV/EHU)**  
-> Clasificación supervisada multiclase desbalanceada sobre historiales clínicos longitudinales de Reddit (**Corpus C-SSRS**, $N = 500$ usuarios), combinando agregación temporal jerárquica en **MentalBERT** (768D), enriquecimiento léxico neuro-simbólico ($\text{TF-IDF} + \chi^2$) y **Support Vector Machines (SVM)** sin fuga de datos.
-
----
-
-## 📋 Tabla de Contenidos
-1. [Descripción General](#-descripción-general)
-2. [Arquitectura del Pipeline](#-arquitectura-del-pipeline)
-3. [Estructura del Proyecto](#-estructura-del-proyecto)
-4. [Fundamentos Teóricos y Preguntas de Investigación](#-fundamentos-teóricos-y-preguntas-de-investigación)
-5. [Resultados Experimentales](#-resultados-experimentales)
-6. [Instalación y Requisitos](#-instalación-y-requisitos)
-7. [Guía de Ejecución](#-guía-de-ejecución)
-8. [Referencias Bibliográficas](#-referencias-bibliográficas)
+> **Data Mining / Supervised Learning Project (UPV/EHU)**  
+> Multi-class imbalanced supervised text classification on longitudinal Reddit mental health timelines (**C-SSRS Corpus**, $N = 500$ users), combining 2-level hierarchical pooling on **MentalBERT** (768D), inductive neuro-symbolic lexical anchoring ($\text{TF-IDF} + \chi^2$), and **Support Vector Machines (SVM)** with strict Train/Dev/Test separation.
 
 ---
 
-## 🔬 Descripción General
-
-La detección automática del riesgo de suicidio sobre historiales de publicaciones en redes sociales presenta dos retos principales: la **dilución de señales agudas** en historiales extensos (cuando un usuario publica decenas de mensajes cotidianos y una sola crisis crítica) y el **desbalanceo severo** de la clase de mayor riesgo (`Attempt`, $9.0\%$).
-
-Este proyecto implementa un marco experimental reproducible y comparable sobre la partición común estratificada del equipo ($70\%$ Train / $15\%$ Dev / $15\%$ Test, `seed=42`):
-* **Baseline común:** Embeddings `all-MiniLM-L6-v2` ($384\text{D}$) con Clustering Jerárquico Aglomerativo (`Ward`, $k=5$, determinista con $\sigma = 0.000$ sobre una partición).
-* **Extractor Jerárquico MentalBERT:** Cobertura del $100\%$ de tokens mediante ventanas deslizantes ($150$ palabras, solapamiento $25$) y agregación factorial $2\times2$ (`Mean/Max` Intra-Post $\times$ Inter-Post) frente al truncamiento estándar a $512$ tokens.
-* **Arquitectura Híbrida Neuro-Simbólica:** Concatenación inductiva de representaciones densas de MentalBERT con $K=100$ términos críticos seleccionados mediante $\chi^2$ exclusivamente en Train.
-* **Protocolo estricto Anti-Data Leakage:** Vectorizador TF-IDF, selección $\chi^2$, normalización $\ell_2$, reducción SVD (RBF), ratio de coste asimétrico $r^*$, regularización $C^*$ (rejilla logarítmica base 10 en Dev) y calibración de umbral $\theta^*$ en Dev mantienen el conjunto **Test completamente ciego** hasta la evaluación final.
+## 📋 Table of Contents
+1. [Overview](#-overview)
+2. [Pipeline Architecture](#-pipeline-architecture)
+3. [Project Structure](#-project-structure)
+4. [Theoretical Background & Research Questions](#-theoretical-background--research-questions)
+5. [Experimental Results](#-experimental-results)
+6. [Installation & Requirements](#-installation--requirements)
+7. [Quickstart CLI Guide](#-quickstart-cli-guide)
+8. [References](#-references)
 
 ---
 
-## 🏗️ Arquitectura del Pipeline
+## 🔬 Overview
+
+Automatic suicide risk assessment over social media user timelines poses two core challenges: **signal dilution** across long posting histories (where an acute crisis appears in an isolated post amid everyday messages) and **severe class imbalance** for the highest-risk category (`Attempt`, $9.0\%$).
+
+This repository implements a reproducible experimental pipeline over the shared stratified team split ($70\%$ Train / $15\%$ Dev / $15\%$ Test, `seed=42`):
+* **Shared Baseline:** `all-MiniLM-L6-v2` ($384\text{D}$) embeddings with Agglomerative Hierarchical Clustering (`Ward`, $k=5$, deterministic with $\sigma = 0.000$ on a fixed split).
+* **Hierarchical MentalBERT Extractor:** $100\%$ token coverage via sliding windows ($150$ words, $25$-word overlap) and a $2\times2$ factorial pooling grid (`Mean/Max` Intra-Post $\times$ Inter-Post) compared against standard $512$-token truncation.
+* **Neuro-Symbolic Hybrid Architecture:** Inductive concatenation of dense MentalBERT representations with $K=100$ critical unigrams/bigrams selected via $\chi^2$ strictly on Train.
+* **Zero Data Leakage Protocol:** TF-IDF vectorizer, $\chi^2$ selector, $\ell_2$ normalization, SVD reduction (RBF), asymmetric cost ratio $r^*$, log-scale regularization $C^*$, and decision threshold $\theta^*$ are fitted/selected exclusively on Train/Dev; **Test remains blind** until final evaluation.
+
+---
+
+## 🏗️ Pipeline Architecture
 
 ```mermaid
 flowchart LR
-    A["Corpus Reddit C-SSRS<br/>(N=500, 5 clases ordinales)"] --> B["Partición Estratificada 70/15/15<br/>(Train=350, Dev=75, Test=75, seed=42)"]
-    B --> C["Baseline Común<br/>MiniLM-L6-v2 (384D) + Ward k=5"]
-    B --> D["MentalBERT (768D)<br/>Ventanas 150w + Pooling 2x2"]
-    B --> E["TF-IDF (1,2)-gramas<br/>SelectKBest chi2 solo en Train"]
-    D --> F["Espacio Híbrido Neuro-Simbólico<br/>MentalBERT || alpha * TF-IDF"]
+    A["Reddit C-SSRS Corpus<br/>(N=500, 5 ordinal classes)"] --> B["Stratified Split 70/15/15<br/>(Train=350, Dev=75, Test=75, seed=42)"]
+    B --> C["Shared Baseline<br/>MiniLM-L6-v2 (384D) + Ward k=5"]
+    B --> D["MentalBERT (768D)<br/>150w Windows + 2x2 Pooling"]
+    B --> E["TF-IDF (1,2)-grams<br/>SelectKBest chi2 on Train only"]
+    D --> F["Neuro-Symbolic Hybrid Space<br/>MentalBERT || alpha * TF-IDF"]
     E --> F
-    F --> G["LinearSVC + Optimización en Dev<br/>(Rejilla log C* y umbral theta*)"]
-    C --> H["Evaluación Ciega en Test<br/>(5 semillas [42..46], mu +/- sigma)"]
+    F --> G["LinearSVC + Dev Optimization<br/>(Log-grid C* and threshold theta*)"]
+    C --> H["Blind Test Evaluation<br/>(5 seeds [42..46], mean +/- std)"]
     G --> H
 ```
 
 ---
 
-## 📁 Estructura del Proyecto
+## 📁 Project Structure
 
 ```text
 text-classification-MD/
 │
-├── data/                                 # Datos crudos (excluidos de Git por NDA)
+├── data/                                 # Raw data (excluded from Git under NDA)
 │   ├── .gitkeep
-│   ├── 500_Reddit_users_posts_labels.csv # Dataset clínico C-SSRS (colocar aquí)
-│   └── embeddings_384d_comun.npy         # Caché de embeddings MiniLM-L6-v2 (384D)
+│   ├── 500_Reddit_users_posts_labels.csv # C-SSRS clinical dataset (place here)
+│   └── embeddings_384d_comun.npy         # Shared MiniLM-L6-v2 (384D) cache
 │
-├── data_processed/                       # Artefactos generados en ejecución (excluidos de Git)
+├── data_processed/                       # Generated artifacts (excluded from Git)
 │   ├── .gitkeep
-│   ├── embeddings_mentalbert_*.npy       # Cachés 768D (plano y 4 variantes jerárquicas)
-│   ├── particiones_compartidas.json      # Índices de la partición oficial (seed=42)
-│   ├── resultados_baseline.json          # Métricas y costes del baseline común
-│   ├── resultados_rq1_pooling.json       # Resultados factoriales RQ1
-│   ├── resultados_rq2_costes_pareto.json # Barrido de costes y comparativa RQ2
-│   └── graficas_clasificacion/           # Figuras Seaborn a 300 DPI
+│   ├── embeddings_mentalbert_*.npy       # 768D caches (flat + 4 hierarchical variants)
+│   ├── particiones_compartidas.json      # Official split indices (seed=42)
+│   ├── resultados_baseline.json          # Shared baseline metrics & profiling
+│   ├── resultados_rq1_pooling.json       # RQ1 factorial pooling results
+│   ├── resultados_rq2_costes_pareto.json # RQ2 cost sweep & model comparison
+│   └── graficas_clasificacion/           # 300 DPI Seaborn figures
 │       ├── fig_rq1_pooling_bars.png
 │       ├── fig_rq1_heatmap_2x2.png
 │       ├── fig_rq2_pareto_frontier.png
 │       └── fig_rq2_cost_gain_bars.png
 │
-├── src/                                  # Código fuente modular
+├── src/                                  # Modular source code
 │   ├── __init__.py
-│   ├── config.py                         # Rutas reproducibles y ontología ordinal C-SSRS
-│   ├── modulo_comun_equipo.py            # Partición oficial 70/15/15 y Baseline Ward 384D
-│   ├── extraccion_mentalbert.py          # Extractor jerárquico en 2 niveles (MentalBERT 768D)
-│   ├── metricas_clasificacion.py         # Métricas clínicas, espacio híbrido, Dev tuning y profiling
-│   ├── experimento_rq1.py                # Experimento RQ1 (pooling temporal) y figuras 300 DPI
-│   ├── experimento_rq2.py                # Experimento RQ2 (costes asimétricos y modelo híbrido)
-│   ├── experimento_mejoras.py            # Extensiones SVM (L2, RBF SVD-64, Ordinal, clustering)
-│   └── experimento_svm_opt.py            # Ablación de regularización C, L2 y umbral theta*
+│   ├── config.py                         # Reproducible paths and C-SSRS ordinal map
+│   ├── modulo_comun_equipo.py            # Shared 70/15/15 split and Ward 384D baseline
+│   ├── extraccion_mentalbert.py          # 2-level hierarchical MentalBERT extractor (768D)
+│   ├── metricas_clasificacion.py         # Clinical metrics, hybrid space, Dev tuning & profiling
+│   ├── experimento_rq1.py                # RQ1 pooling experiment & 300 DPI plots
+│   ├── experimento_rq2.py                # RQ2 cost asymmetry & hybrid model comparison
+│   ├── experimento_mejoras.py            # SVM extensions (L2, RBF SVD-64, Ordinal, clustering)
+│   └── experimento_svm_opt.py            # Regularization C, L2 & threshold ablation study
 │
-├── main.py                               # Orquestador CLI principal y tabla maestra
-├── pipeline.py                           # Carga reproducible y resumen estadístico del corpus
-├── ejecutar_pipeline.ps1                 # Lanzador para Windows PowerShell
-├── ejecutar_pipeline.bat                 # Lanzador para Windows CMD
-├── ejecutar_pipeline.sh                  # Lanzador para Linux / macOS Bash
-├── requirements.txt                      # Dependencias del entorno Python
-├── INFORME_CIENTIFICO_C-SSRS.md          # Memoria experimental y formalización completa
-├── .gitignore                            # Exclusión de datos confidenciales y binarios
-└── README.md                             # Documentación técnica del repositorio
+├── main.py                               # Main CLI orchestrator & master comparison table
+├── pipeline.py                           # Reproducible data loader & class distribution summary
+├── ejecutar_pipeline.ps1                 # Windows PowerShell launcher
+├── ejecutar_pipeline.bat                 # Windows CMD launcher
+├── ejecutar_pipeline.sh                  # Linux / macOS Bash launcher
+├── requirements.txt                      # Python dependencies
+├── INFORME_CIENTIFICO_C-SSRS.md          # Full experimental report (Spanish)
+├── .gitignore                            # Confidentiality & binary exclusions
+├── README.md                             # English documentation
+└── README.es.md                          # Spanish documentation
 ```
 
 ---
 
-## 🧠 Fundamentos Teóricos y Preguntas de Investigación
+## 🧠 Theoretical Background & Research Questions
 
-### Corpus y Ontología Clínica C-SSRS (Gaur et al., 2019)
-* **5 niveles ordinales ($N=500$):** `Supportive` ($108$, $21.6\%$) $<$ `Indicator` ($99$, $19.8\%$) $<$ `Ideation` ($171$, $34.2\%$) $<$ `Behavior` ($77$, $15.4\%$) $<$ `Attempt` ($45$, $9.0\%$).
-* **Partición común (`random_state=42`):** Train ($n=350$, $31$ `Attempt`), Dev ($n=75$, $7$ `Attempt`), Test ($n=75$, $7$ `Attempt`).
+### Corpus & C-SSRS Clinical Ontology (Gaur et al., 2019)
+* **5 ordinal severity levels ($N=500$):** `Supportive` ($108$, $21.6\%$) $<$ `Indicator` ($99$, $19.8\%$) $<$ `Ideation` ($171$, $34.2\%$) $<$ `Behavior` ($77$, $15.4\%$) $<$ `Attempt` ($45$, $9.0\%$).
+* **Shared split (`random_state=42`):** Train ($n=350$, $31$ `Attempt`), Dev ($n=75$, $7$ `Attempt`), Test ($n=75$, $7$ `Attempt`).
 
-### RQ1 — Agregación Temporal Jerárquica vs. Truncamiento a 512 Tokens
-> *«¿Cómo afecta la función de agregación temporal del historial de usuario (`Mean-Pooling` truncado a 512 tokens frente a agregación jerárquica en dos niveles `Mean/Max`) a la detección de publicaciones aisladas de crisis aguda (`Attempt`) con SVM?»*
+### RQ1 — Hierarchical Temporal Aggregation vs. 512-Token Truncation
+> *"How does temporal aggregation of user history (512-token truncated `Mean-Pooling` vs. 2-level hierarchical `Mean/Max` pooling) affect an SVM classifier's ability to detect isolated acute crisis posts (`Attempt`)?"*
 
-* `Plano Truncado (512)` alcanza `F1-Attempt` $= 0.462$ en `seed=42`, pero colapsa a $0.000$ en 3 de 5 particiones ($\sigma = 0.182$).
-* `Jerárquico Mean-Mean` obtiene la mayor estabilidad global (`Macro-F1` $= 0.327 \pm 0.035$, `F1-Attempt` $= 0.196 \pm 0.119$, `Precision` $= 0.407$), mientras `Max-Mean` maximiza `Quadratic Kappa` ($0.344 \pm 0.101$). No obstante, con pérdida simétrica ($C=1.0$), el `Recall-Attempt` queda por debajo de $0.15$.
+* `Plano Truncado (512)` reaches `F1-Attempt` $= 0.462$ on `seed=42`, but collapses to $0.000$ in 3 out of 5 splits ($\sigma = 0.182$).
+* `Hierarchical Mean-Mean` achieves the highest cross-split stability (`Macro-F1` $= 0.327 \pm 0.035$, `F1-Attempt` $= 0.196 \pm 0.119$, `Precision` $= 0.407$), while `Max-Mean` maximizes `Quadratic Weighted Kappa` ($0.344 \pm 0.101$). Under symmetric loss ($C=1.0$), `Recall-Attempt` remains below $0.15$.
 
-### RQ2 — Penalización Asimétrica de Costes vs. Modelo Híbrido Neuro-Simbólico
-> *«¿Qué mecanismo mitiga mejor el colapso del Recall al $9\%$ de prevalencia: la reponderación asimétrica de costes ($r = C_{\text{FN}} / C_{\text{FP}}$) o la combinación neuro-simbólica ($\text{MentalBERT} + \text{TF-IDF}_{\chi^2}$) calibrada en Dev?»*
+### RQ2 — Asymmetric Cost Reweighting vs. Neuro-Symbolic Hybrid Model
+> *"Which supervised mechanism better mitigates Recall collapse under $9\%$ prevalence: linear cost asymmetry ($r = C_{\text{FN}} / C_{\text{FP}}$) or a neuro-symbolic hybrid space ($\text{MentalBERT} + \text{TF-IDF}_{\chi^2}$) calibrated on Dev?"*
 
-* El barrido $r \in [1.0, 20.0]$ sobre `Mean-Mean` ($r^* = 2.0$ en Dev) estanca el `Recall-Attempt` en $0.171 \pm 0.107$ mientras la precisión desciende de $0.407$ a $0.082$.
-* La arquitectura híbrida neuro-simbólica ($\mathbf{x}_i = [\mathbf{e}_i^{\text{MentalBERT}} \parallel \alpha \cdot \mathbf{v}_i^{\text{TF-IDF}}]$) eleva `F1-Attempt` en `seed=42` a **`0.600`** (`Híbrido Oficial`), alcanza **`Quadratic Kappa = 0.442 ± 0.117`** con menor varianza en `Attempt` (`Híbrido Robusto`, $\sigma = 0.058$) y logra **`F1-Attempt = 0.225 ± 0.202`** con calibración de umbral en Dev (`Híbrido Triaje`).
+* Sweeping $r \in [1.0, 20.0]$ on `Mean-Mean` ($r^* = 2.0$ on Dev) saturates `Recall-Attempt` at $0.171 \pm 0.107$ while precision drops from $0.407$ to $0.082$.
+* The neuro-symbolic hybrid ($\mathbf{x}_i = [\mathbf{e}_i^{\text{MentalBERT}} \parallel \alpha \cdot \mathbf{v}_i^{\text{TF-IDF}}]$) raises `F1-Attempt` on `seed=42` to **`0.600`** (`Híbrido Oficial`), reaches **`Quadratic Kappa = 0.442 ± 0.117`** with reduced `Attempt` variance (`Híbrido Robusto`, $\sigma = 0.058$), and yields **`F1-Attempt = 0.225 ± 0.202`** via Dev threshold calibration (`Híbrido Triaje`).
 
 ---
 
-## 📊 Resultados Experimentales
+## 📊 Experimental Results
 
-Evaluación ciega sobre Test ($n=75$) en la semilla oficial (`seed=42`) y estabilidad en 5 particiones estratificadas (`[42, 43, 44, 45, 46]`):
+Blind Test evaluation ($n=75$) on the official split (`seed=42`) and stability across 5 stratified splits (`[42, 43, 44, 45, 46]`):
 
-| Alternativa | Acc (s42) | Acc ($\mu \pm \sigma$) | w-F1 ($\mu$) | Macro-F1 ($\mu$) | F1-Att (s42) | F1-Att ($\mu \pm \sigma$) | $\kappa_w$ ($\mu$) | Latencia (ms/doc) |
+| Alternative | Acc (s42) | Acc ($\mu \pm \sigma$) | w-F1 ($\mu$) | Macro-F1 ($\mu$) | F1-Att (s42) | F1-Att ($\mu \pm \sigma$) | $\kappa_w$ ($\mu$) | Latency (ms/doc) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **1. Baseline (`MiniLM + Ward k=5`)** | $0.333$ | $0.299 \pm 0.023$ | $0.182$ | $0.118$ | $0.000$ | $0.000 \pm 0.000$ | $0.001$ | $0.009$ |
-| **2. MentalBERT Plano (512)** | $0.347$ | $0.339 \pm 0.027$ | $0.327$ | $0.287$ | $0.462$ | $0.132 \pm 0.182$ | $0.328$ | $0.021$ |
-| **2b. MentalBERT Jerárquico Mean-Mean** | $0.280$ | $0.355 \pm 0.048$ | $0.349$ | **0.327** | $0.364$ | $0.196 \pm 0.119$ | $0.341$ | $0.020$ |
-| **3. Solo TF-IDF Crítico $\chi^2$ (`balanced`)** | $0.347$ | $0.336 \pm 0.010$ | $0.176$ | $0.119$ | $0.222$ | $0.094 \pm 0.116$ | $0.034$ | $0.014$ |
-| **4a. Híbrido Oficial ($C=1.0$, simétrico)** | **0.347** | $0.352 \pm 0.025$ | $0.340$ | $0.305$ | **0.600** | $0.201 \pm 0.219$ | $0.349$ | $0.017$ |
-| **4b. Híbrido Robusto ($\ell_2, C^*$ Dev, `balanced`)** | $0.307$ | **0.371 ± 0.048** | **0.350** | $0.319$ | $0.125$ | $0.214 \pm \mathbf{0.058}$ | **0.442** | $0.022$ |
-| **4c. Híbrido Triaje Dev ($\theta^*$ calibrado)** | **0.347** | $0.339 \pm 0.031$ | $0.333$ | $0.302$ | **0.600** | **0.225 ± 0.202** | $0.347$ | $0.017$ |
+| **2. MentalBERT Flat (512)** | $0.347$ | $0.339 \pm 0.027$ | $0.327$ | $0.287$ | $0.462$ | $0.132 \pm 0.182$ | $0.328$ | $0.021$ |
+| **2b. MentalBERT Hierarchical Mean-Mean** | $0.280$ | $0.355 \pm 0.048$ | $0.349$ | **0.327** | $0.364$ | $0.196 \pm 0.119$ | $0.341$ | $0.020$ |
+| **3. TF-IDF Critical $\chi^2$ Only (`balanced`)** | $0.347$ | $0.336 \pm 0.010$ | $0.176$ | $0.119$ | $0.222$ | $0.094 \pm 0.116$ | $0.034$ | $0.014$ |
+| **4a. Hybrid Official ($C=1.0$, symmetric)** | **0.347** | $0.352 \pm 0.025$ | $0.340$ | $0.305$ | **0.600** | $0.201 \pm 0.219$ | $0.349$ | $0.017$ |
+| **4b. Hybrid Robust ($\ell_2, C^*$ Dev, `balanced`)** | $0.307$ | **0.371 ± 0.048** | **0.350** | $0.319$ | $0.125$ | $0.214 \pm \mathbf{0.058}$ | **0.442** | $0.022$ |
+| **4c. Hybrid Triage Dev ($\theta^*$ calibrated)** | **0.347** | $0.339 \pm 0.031$ | $0.333$ | $0.302$ | **0.600** | **0.225 ± 0.202** | $0.347$ | $0.017$ |
 
-Para las tablas completas por clase (`Supportive`..`Attempt`), curvas ROC/PR-AUC y ablaciones (`SVC RBF`, `SVM Ordinal Frank & Hall`, `Ward 384D`), consultar [`INFORME_CIENTIFICO_C-SSRS.md`](./INFORME_CIENTIFICO_C-SSRS.md).
+See [`INFORME_CIENTIFICO_C-SSRS.md`](./INFORME_CIENTIFICO_C-SSRS.md) for per-class F1 tables (`Supportive`..`Attempt`), ROC/PR-AUC scores, and ablations (`SVC RBF`, `Frank & Hall Ordinal SVM`, `Ward 384D`).
 
 ---
 
-## 💻 Instalación y Requisitos
+## 💻 Installation & Requirements
 
-### Requisitos Previos
-* Python 3.10 o superior (verificado en Python 3.13).
-* Colocar el corpus `500_Reddit_users_posts_labels.csv` dentro de la carpeta `data/`.
+### Prerequisites
+* Python 3.10+ (tested on Python 3.13).
+* Place `500_Reddit_users_posts_labels.csv` inside `data/`.
 
-### Pasos de Instalación
+### Setup Steps
 
-1. Clonar el repositorio:
+1. Clone the repository:
    ```bash
    git clone https://github.com/aimarlarriba/text-classification-MD.git
    cd text-classification-MD
    ```
 
-2. Crear y activar un entorno virtual:
+2. Create and activate a virtual environment:
    * **Windows (PowerShell):**
      ```powershell
      python -m venv .venv
@@ -162,39 +165,39 @@ Para las tablas completas por clase (`Supportive`..`Attempt`), curvas ROC/PR-AUC
      source .venv/bin/activate
      ```
 
-3. Instalar las dependencias:
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
 ---
 
-## 🚀 Guía de Ejecución
+## 🚀 Quickstart CLI Guide
 
-### Opción 1: Pipeline Completo con `main.py`
-Ejecuta Baseline + RQ1 + RQ2 + Tabla Maestra y exporta resultados JSON y figuras a 300 DPI en `data_processed/`:
+### Option 1: Full Pipeline via `main.py`
+Runs Baseline + RQ1 + RQ2 + Master Table and exports JSON results and 300 DPI figures to `data_processed/`:
 ```bash
 python main.py
 ```
 
-### Opción 2: Lanzadores por Sistema Operativo
+### Option 2: OS Launchers
 * **Windows (PowerShell):** `.\ejecutar_pipeline.ps1`
 * **Windows (CMD):** `ejecutar_pipeline.bat`
 * **Linux / macOS:** `chmod +x ejecutar_pipeline.sh && ./ejecutar_pipeline.sh`
 
-### Opción 3: Ejecución Modular
+### Option 3: Individual Modules
 ```bash
-python pipeline.py              # Resumen estadístico del corpus C-SSRS
-python main.py --baseline       # Solo Baseline común (MiniLM 384D + Ward k=5)
-python main.py --rq1            # Solo Experimento RQ1 (pooling temporal)
-python main.py --rq2            # Solo Experimento RQ2 (costes y modelo híbrido)
-python main.py --mejoras        # Extensiones SVM (RBF, Ordinal Frank & Hall, L2, clustering)
-python main.py --svm-opt        # Ablación de regularización C, L2 y umbral theta*
+python pipeline.py              # Corpus C-SSRS class distribution summary
+python main.py --baseline       # Shared baseline only (MiniLM 384D + Ward k=5)
+python main.py --rq1            # RQ1 experiment only (temporal pooling)
+python main.py --rq2            # RQ2 experiment only (cost asymmetry & hybrid model)
+python main.py --mejoras        # SVM extensions (RBF, Frank & Hall Ordinal, L2, clustering)
+python main.py --svm-opt        # LinearSVC regularization C, L2 & threshold ablation
 ```
 
 ---
 
-## 📚 Referencias Bibliográficas
+## 📚 References
 
 1. **Gaur, M., Alambo, A., Sain, J. P., Kursuncu, U., Thirunarayan, K., Kavuluru, R., Sheth, A., Welton, R., & Pathak, J. (2019).** *Knowledge-aware assessment of severity of suicide risk for early intervention.* WWW '19, pp. 514–525. ACM.
 2. **Ji, S., Zhang, T., Ansari, L., Fu, J., Tiwari, P., & Cambria, E. (2021).** *MentalBERT: Publicly Available Pretrained Language Models for Mental Healthcare.* arXiv:2110.15621.
@@ -205,4 +208,4 @@ python main.py --svm-opt        # Ablación de regularización C, L2 y umbral th
 
 ---
 
-Desarrollado por **[Aimar Larriba](https://github.com/aimarlarriba)** — Minería de Datos / Aprendizaje Supervisado (UPV/EHU).
+Developed by **[Aimar Larriba](https://github.com/aimarlarriba)** — Data Mining / Supervised Learning (UPV/EHU).
