@@ -74,7 +74,7 @@ def ejecutar_experimento_rq1(semillas: List[int] = [42, 43, 44, 45, 46]) -> pd.D
 
     print(
         f"[*] Clases ordinales C-SSRS: {CLASES_ORDEN_CSSRS} | "
-        f"Train={len(particiones_semillas[42]['y_tr'])}, Test={len(particiones_semillas[42]['y_te'])}"
+        f"Train={len(particiones_semillas[semillas[0]]['y_tr'])}, Test={len(particiones_semillas[semillas[0]]['y_te'])}"
     )
 
     extractor = MentalBertHierarchicalExtractor()

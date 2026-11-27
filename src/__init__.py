@@ -19,7 +19,7 @@ from .config import (
     DATA_DIR,
     RAW_DATA_FILE,
     PROCESSED_DATA_DIR,
-    REPORTS_DIR,
+    FIGURES_DIR,
     CLASS_MAP,
     CLASS_NAMES,
 )
@@ -30,7 +30,7 @@ __all__ = [
     "DATA_DIR",
     "RAW_DATA_FILE",
     "PROCESSED_DATA_DIR",
-    "REPORTS_DIR",
+    "FIGURES_DIR",
     "CLASS_MAP",
     "CLASS_NAMES",
 ]

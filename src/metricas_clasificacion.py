@@ -11,8 +11,10 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import time
 import tracemalloc
 import numpy as np
+import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_selection import SelectKBest, chi2
+from sklearn.preprocessing import normalize
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -24,6 +26,12 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.svm import LinearSVC
+
+from src.modulo_comun_equipo import (
+    RUTA_CSV_DEFECTO,
+    cargar_particion_oficial_equipo,
+    limpiar_texto_reddit,
+)
 
 # Orden clínico ordinal de la escala C-SSRS (Gaur et al., 2019)
 CLASES_ORDEN_CSSRS: List[str] = ["Supportive", "Indicator", "Ideation", "Behavior", "Attempt"]
@@ -145,11 +153,23 @@ def construir_espacio_hibrido(
     k_tfidf: int = 100,
     alpha: float = 2.0,
     solo_tfidf: bool = False,
+    objetivo_chi2: str = "binario",
+    normalizar_l2: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Construye de forma estrictamente inductiva (fit solo en Train) la representación
     léxica TF-IDF filtrada por chi2 y opcionalmente la concatena con embeddings densos:
         x_i = [ e_i^MentalBERT || alpha * v_i^TFIDF ]
+
+    Justificación analítica de hiperparámetros por defecto:
+        - `k_tfidf=100` (~13% de las 768 dimensiones densas) introduce anclaje léxico
+          discriminativo manteniendo la razón dimensiones/muestras acotada (868 vs N_tr=350).
+        - `alpha=2.0` compensa la menor norma euclídea media del subvector disperso TF-IDF
+          frente a la norma del bloque continuo MentalBERT (~8-10) sin anular la escala original.
+        - `objetivo_chi2`: 'binario' selecciona términos asociados a `clase_critica`;
+          'multiclase' evalúa dependencia chi2 sobre todas las clases C-SSRS.
+        - `normalizar_l2`: si es True, normaliza L2 cada bloque por separado y renormaliza
+          el vector concatenado resultante.
 
     Precondiciones:
         - textos_tr, textos_dev, textos_te corresponden a particiones disjuntas.
@@ -169,9 +189,15 @@ def construir_espacio_hibrido(
 
     k_efectivo = min(k_tfidf, X_tfidf_tr.shape[1])
     selector = SelectKBest(chi2, k=k_efectivo)
-    X_sel_tr = selector.fit_transform(X_tfidf_tr, y_tr == clase_critica).toarray()
+    y_objetivo = (y_tr == clase_critica) if objetivo_chi2 == "binario" else y_tr
+    X_sel_tr = selector.fit_transform(X_tfidf_tr, y_objetivo).toarray()
     X_sel_dev = selector.transform(X_tfidf_dev).toarray()
     X_sel_te = selector.transform(X_tfidf_te).toarray()
+
+    if normalizar_l2:
+        X_sel_tr = normalize(X_sel_tr, norm="l2")
+        X_sel_dev = normalize(X_sel_dev, norm="l2")
+        X_sel_te = normalize(X_sel_te, norm="l2")
 
     if solo_tfidf:
         return X_sel_tr, X_sel_dev, X_sel_te
@@ -179,10 +205,69 @@ def construir_espacio_hibrido(
     if X_mb_tr is None or X_mb_dev is None or X_mb_te is None:
         raise ValueError("Los embeddings densos no pueden ser None cuando solo_tfidf=False.")
 
+    if normalizar_l2:
+        X_mb_tr = normalize(X_mb_tr, norm="l2")
+        X_mb_dev = normalize(X_mb_dev, norm="l2")
+        X_mb_te = normalize(X_mb_te, norm="l2")
+
     X_tr = np.hstack([X_mb_tr, X_sel_tr * alpha])
     X_dev = np.hstack([X_mb_dev, X_sel_dev * alpha])
     X_te = np.hstack([X_mb_te, X_sel_te * alpha])
+
+    if normalizar_l2:
+        X_tr = normalize(X_tr, norm="l2")
+        X_dev = normalize(X_dev, norm="l2")
+        X_te = normalize(X_te, norm="l2")
+
     return X_tr, X_dev, X_te
+
+
+def cargar_particiones_y_tfidf(
+    semillas: Sequence[int],
+    k_tfidf: int = 100,
+    clase_critica: str = "Attempt",
+    objetivo_chi2: str = "binario",
+    incluir_x384: bool = False,
+    precalcular_tfidf: bool = True,
+    ruta_csv: str = RUTA_CSV_DEFECTO,
+) -> Tuple[Dict[int, Dict[str, Any]], np.ndarray, Dict[int, Tuple[np.ndarray, np.ndarray, np.ndarray]]]:
+    """
+    Carga particiones estratificadas Train/Dev/Test para una lista de semillas,
+    los textos limpios del corpus y, opcionalmente, precalcula matrices TF-IDF + chi2
+    ajustadas estrictamente en Train por semilla.
+    """
+    df_raw = pd.read_csv(ruta_csv)
+    textos_raw = np.array(df_raw["Post"].fillna("").apply(limpiar_texto_reddit).tolist())
+
+    particiones: Dict[int, Dict[str, Any]] = {}
+    tfidf_por_semilla: Dict[int, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
+    for s in semillas:
+        p = cargar_particion_oficial_equipo(ruta_csv=ruta_csv, seed=s)
+        entry: Dict[str, Any] = {
+            "tr": (p["idx"][0], p["y"][0]),
+            "dev": (p["idx"][1], p["y"][1]),
+            "te": (p["idx"][2], p["y"][2]),
+        }
+        if incluir_x384:
+            entry["X384"] = p["X_384"]
+        particiones[s] = entry
+
+        if precalcular_tfidf:
+            idx_tr_s, y_tr_s = entry["tr"]
+            idx_dev_s, _ = entry["dev"]
+            idx_te_s, _ = entry["te"]
+            tfidf_por_semilla[s] = construir_espacio_hibrido(
+                None, None, None,
+                textos_raw[idx_tr_s], textos_raw[idx_dev_s], textos_raw[idx_te_s],
+                y_tr_s,
+                clase_critica=clase_critica,
+                k_tfidf=k_tfidf,
+                solo_tfidf=True,
+                objetivo_chi2=objetivo_chi2,
+            )
+
+    return particiones, textos_raw, tfidf_por_semilla
 
 
 def seleccionar_c_en_dev(

@@ -35,31 +35,18 @@ from src.metricas_clasificacion import (
     CLASES_ORDEN_CSSRS,
     GRID_C_LOGARITMICO,
     calibrar_umbral_en_dev,
-    construir_espacio_hibrido,
+    cargar_particiones_y_tfidf,
     evaluar_predicciones_clinicas,
     perfilar_entrenamiento_e_inferencia,
     resumir_metricas_multirun,
     seleccionar_c_en_dev,
 )
-from src.modulo_comun_equipo import RUTA_CSV_DEFECTO, cargar_particion_oficial_equipo, limpiar_texto_reddit
 
 
 def ejecutar_experimento_svm_opt(semillas: List[int] = [42, 43, 44, 45, 46]) -> pd.DataFrame:
     """Ejecuta el estudio de ablación y optimización de SVM sobre espacio híbrido."""
     extractor = MentalBertHierarchicalExtractor()
     rep_dict = extractor.obtener_o_generar_representaciones()
-
-    df_raw = pd.read_csv(RUTA_CSV_DEFECTO)
-    textos_raw = np.array(df_raw["Post"].fillna("").apply(limpiar_texto_reddit).tolist())
-
-    particiones = {}
-    for s in semillas:
-        p = cargar_particion_oficial_equipo(seed=s)
-        particiones[s] = {
-            "tr": (p["idx"][0], p["y"][0]),
-            "dev": (p["idx"][1], p["y"][1]),
-            "te": (p["idx"][2], p["y"][2]),
-        }
 
     nombre_att = "Attempt"
     print("=" * 115)
@@ -79,17 +66,13 @@ def ejecutar_experimento_svm_opt(semillas: List[int] = [42, 43, 44, 45, 46]) -> 
     ]
 
     filas = []
-
-    tfidf_por_semilla = {}
-    for s in semillas:
-        idx_tr_s, y_tr_s = particiones[s]["tr"]
-        idx_dev_s, _ = particiones[s]["dev"]
-        idx_te_s, _ = particiones[s]["te"]
-        tfidf_por_semilla[s] = construir_espacio_hibrido(
-            None, None, None,
-            textos_raw[idx_tr_s], textos_raw[idx_dev_s], textos_raw[idx_te_s],
-            y_tr_s, clase_critica=nombre_att, k_tfidf=100, solo_tfidf=True,
-        )
+    particiones, _, tfidf_por_semilla = cargar_particiones_y_tfidf(
+        semillas=semillas,
+        k_tfidf=100,
+        clase_critica=nombre_att,
+        objetivo_chi2="binario",
+        precalcular_tfidf=True,
+    )
 
     for exp_nom, emb_type, modo_c, cw, use_l2, use_th in experimentos:
         metricas_por_semilla = []

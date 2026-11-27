@@ -10,6 +10,7 @@ Garantiza que todos los integrantes trabajen exactamente con:
 import os
 import sys
 import ast
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import cdist
@@ -21,9 +22,10 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RANDOM_SEED = 42
-RUTA_CSV_DEFECTO = "data/500_Reddit_users_posts_labels.csv"
-RUTA_CACHE_384D = "data/embeddings_384d_comun.npy"
+RUTA_CSV_DEFECTO = str(PROJECT_ROOT / "data" / "500_Reddit_users_posts_labels.csv")
+RUTA_CACHE_384D = str(PROJECT_ROOT / "data" / "embeddings_384d_comun.npy")
 _CACHE_CORPUS_EQUIPO = {}
 
 
@@ -144,10 +146,13 @@ class BaselineClusteringJerarquico384D:
 
         self.centroides = np.zeros((self.n_clusters, X_train.shape[1]))
         self.probabilidades_cluster = np.zeros((self.n_clusters, len(self.clases_)))
+        valores, conteos = np.unique(y_train, return_counts=True)
+        clase_mayoritaria_global = valores[np.argmax(conteos)]
 
         for c in range(self.n_clusters):
             mask = (clusters_tr == c)
             if not np.any(mask):
+                self.mapa_clase[c] = clase_mayoritaria_global
                 continue
             self.centroides[c] = X_train[mask].mean(axis=0)
             y_c = y_train[mask]

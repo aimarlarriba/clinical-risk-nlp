@@ -49,13 +49,13 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from src.modulo_comun_equipo import RUTA_CSV_DEFECTO, cargar_particion_oficial_equipo, limpiar_texto_reddit
+from src.modulo_comun_equipo import cargar_particion_oficial_equipo
 from src.extraccion_mentalbert import MentalBertHierarchicalExtractor
 from src.metricas_clasificacion import (
     CLASES_ORDEN_CSSRS,
     GRID_C_LOGARITMICO,
     calibrar_umbral_en_dev,
-    construir_espacio_hibrido,
+    cargar_particiones_y_tfidf,
     evaluar_predicciones_clinicas,
     perfilar_entrenamiento_e_inferencia,
     resumir_metricas_multirun,
@@ -166,38 +166,31 @@ def ejecutar_experimento_rq2(
     )
 
     print("\n--- FASE 2: ESTUDIO DE ENRIQUECIMIENTO NEURO-SIMBÓLICO Y OPTIMIZACIÓN SVM ---")
-    df_raw = pd.read_csv(RUTA_CSV_DEFECTO)
-    textos_raw = np.array(df_raw["Post"].fillna("").apply(limpiar_texto_reddit).tolist())
+    _, _, tfidf_por_semilla = cargar_particiones_y_tfidf(
+        semillas=semillas,
+        k_tfidf=100,
+        clase_critica=nombre_attempt,
+        objetivo_chi2="binario",
+        precalcular_tfidf=True,
+    )
 
-    # Precalcular TF-IDF + chi2 exactamente una vez por semilla (idéntico resultado, 6x más rápido)
-    tfidf_por_semilla = {}
-    for s in semillas:
-        idx_tr_s, y_tr_s = particiones[s]["tr"]
-        idx_dev_s, _ = particiones[s]["dev"]
-        idx_te_s, _ = particiones[s]["te"]
-        tfidf_por_semilla[s] = construir_espacio_hibrido(
-            None, None, None,
-            textos_raw[idx_tr_s], textos_raw[idx_dev_s], textos_raw[idx_te_s],
-            y_tr_s, clase_critica=nombre_attempt, k_tfidf=100, solo_tfidf=True,
-        )
-
-    # Modos: (Nombre descriptivo, tipo_base, modo_c, modo_pesos, use_dev_threshold)
+    # Modos: (Modelo_ID, Nombre descriptivo, tipo_base, modo_c, modo_pesos, use_dev_threshold)
     # modo_c: "fixed_1.0" o "select_dev_log" (escala logarítmica base 10 en Dev)
     modelos_comparativa = [
-        ("1. Plano Truncado (512)", "plano", "fixed_1.0", "Simétrico (r=1.0)", False),
-        ("1. Plano Truncado (512)", "plano", "fixed_1.0", "Heurístico Balanced", False),
-        ("2. Jerárquico Mean-Mean", "mean_mean", "fixed_1.0", "Simétrico (r=1.0)", False),
-        ("2. Jerárquico Mean-Mean", "mean_mean", "fixed_1.0", "Heurístico Balanced", False),
-        ("3. Solo TF-IDF Crítico", "tfidf_solo", "fixed_1.0", "Simétrico (r=1.0)", False),
-        ("3. Solo TF-IDF Crítico", "tfidf_solo", "fixed_1.0", "Heurístico Balanced", False),
-        ("4. Híbrido Propuesto (Oficial)", "hibrido_plano", "fixed_1.0", "Simétrico (r=1.0)", False),
-        ("4. Híbrido Propuesto (Robusto)", "hibrido_mean_max_l2", "select_dev_log", "Heurístico Balanced", False),
-        ("4. Híbrido Propuesto (Triaje Dev)", "hibrido_plano", "fixed_1.0", "Calibrado Dev theta* (Prec>=0.20)", True),
+        ("plano_sim", "1. Plano Truncado (512)", "plano", "fixed_1.0", "Simétrico (r=1.0)", False),
+        ("plano_bal", "1. Plano Truncado (512)", "plano", "fixed_1.0", "Heurístico Balanced", False),
+        ("mean_mean_sim", "2. Jerárquico Mean-Mean", "mean_mean", "fixed_1.0", "Simétrico (r=1.0)", False),
+        ("mean_mean_bal", "2. Jerárquico Mean-Mean", "mean_mean", "fixed_1.0", "Heurístico Balanced", False),
+        ("tfidf_sim", "3. Solo TF-IDF Crítico", "tfidf_solo", "fixed_1.0", "Simétrico (r=1.0)", False),
+        ("tfidf_bal", "3. Solo TF-IDF Crítico", "tfidf_solo", "fixed_1.0", "Heurístico Balanced", False),
+        ("hibrido_oficial", "4. Híbrido Propuesto (Oficial)", "hibrido_plano", "fixed_1.0", "Simétrico (r=1.0)", False),
+        ("hibrido_robusto", "4. Híbrido Propuesto (Robusto)", "hibrido_mean_max_l2", "select_dev_log", "Heurístico Balanced", False),
+        ("hibrido_triaje", "4. Híbrido Propuesto (Triaje Dev)", "hibrido_plano", "fixed_1.0", "Calibrado Dev theta* (Prec>=0.20)", True),
     ]
 
     filas_comparativa = []
 
-    for desc_mod, tipo_mod, modo_c, modo_pesos, use_dev_th in modelos_comparativa:
+    for mod_id, desc_mod, tipo_mod, modo_c, modo_pesos, use_dev_th in modelos_comparativa:
         metricas_por_semilla = []
         c_seleccionados = []
         thetas_seleccionados = []
@@ -286,6 +279,7 @@ def ejecutar_experimento_rq2(
             metricas_por_semilla.append(m_te)
 
         res_comp = resumir_metricas_multirun(metricas_por_semilla, clases_orden=CLASES_ORDEN_CSSRS)
+        res_comp["Modelo_ID"] = mod_id
         res_comp["Modelo"] = desc_mod
         res_comp["Pesos"] = modo_pesos
         res_comp["C_seed42"] = float(c_seleccionados[0])

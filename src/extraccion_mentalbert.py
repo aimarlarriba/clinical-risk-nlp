@@ -11,12 +11,11 @@ Genera y cachea en disco las 4 representaciones factoriales (500 x 768):
   4. emb_max_max:   Max(Post)  -> Max(Usuario)   [Puro valor extremo: mayor señal en todo el historial]
 """
 from pathlib import Path
-import os
 import sys
 import ast
 import re
 import time
-from typing import List, Tuple, Dict
+from typing import List, Dict
 import numpy as np
 import pandas as pd
 
@@ -89,6 +88,12 @@ def trocear_en_ventanas(texto: str, max_palabras: int = 150, solapamiento: int =
 
 
 class MentalBertHierarchicalExtractor:
+    """
+    Extractor de representaciones densas (768D) mediante MentalBERT congelado.
+    Implementa la línea base truncada a 512 tokens y el espacio factorial 2x2 de
+    agregación jerárquica (Intra-Post x Inter-Post) sin truncamiento de contexto.
+    """
+
     def __init__(self, model_name: str = "mental/mental-bert-base-uncased"):
         self.model_name = model_name
         self.device = None
@@ -233,9 +238,9 @@ class MentalBertHierarchicalExtractor:
             - Temporal: O(1) lectura desde caché; O(F * L_max^2 + N * P) en extracción completa.
         """
         DIR_DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
-        # Comprobar si las 4 ya están cacheadas
+        # Comprobar si las 5 representaciones ya están cacheadas
         if all(ruta.exists() for ruta in CACHE_FILES.values()):
-            print("[*] Cargando las 4 representaciones de MentalBERT desde la caché local...", flush=True)
+            print("[*] Cargando las 5 representaciones de MentalBERT desde la caché local...", flush=True)
             for nombre, ruta in CACHE_FILES.items():
                 print(f"  [OK] Cargado {nombre:<15}: {ruta.name}", flush=True)
             return {nombre: np.load(ruta) for nombre, ruta in CACHE_FILES.items()}

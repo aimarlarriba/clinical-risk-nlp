@@ -17,7 +17,6 @@ from src.modulo_comun_equipo import (
     RANDOM_SEED,
     RUTA_CSV_DEFECTO,
     cargar_particion_oficial_equipo,
-    limpiar_texto_reddit,
 )
 
 

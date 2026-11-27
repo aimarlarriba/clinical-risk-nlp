@@ -194,21 +194,16 @@ def mostrar_resumen_ejecutivo():
             data = json.load(f)
         modelos = data.get("comparativa_modelos", [])
         mapeo = {
-            "1. Plano Truncado (512)": "2. MentalBERT Plano (512)",
-            "3. Solo TF-IDF Crítico": "3. Solo TF-IDF Crítico chi2",
-            "4. Híbrido Propuesto (Oficial)": "4a. Híbrido (Oficial C=1.0)",
-            "4. Híbrido Propuesto (Robusto)": "4b. Híbrido (Robusto C* Dev)",
-            "4. Híbrido Propuesto (Triaje Dev)": "4c. Híbrido (Triaje Dev θ*)",
+            "plano_sim": "2. MentalBERT Plano (512)",
+            "tfidf_bal": "3. Solo TF-IDF Crítico chi2",
+            "hibrido_oficial": "4a. Híbrido (Oficial C=1.0)",
+            "hibrido_robusto": "4b. Híbrido (Robusto C* Dev)",
+            "hibrido_triaje": "4c. Híbrido (Triaje Dev θ*)",
         }
         for m in modelos:
-            nombre = m.get("Modelo", "")
-            pesos = m.get("Pesos", "")
-            if "Plano" in nombre and "Simétrico" in pesos:
-                etiqueta = mapeo.get(nombre, nombre)
-            elif "TF-IDF" in nombre and "Balanced" in pesos:
-                etiqueta = mapeo.get(nombre, nombre)
-            elif "Oficial" in nombre or "Robusto" in nombre or "Triaje" in nombre:
-                etiqueta = mapeo.get(nombre, nombre)
+            mod_id = m.get("Modelo_ID")
+            if mod_id in mapeo:
+                etiqueta = mapeo[mod_id]
             else:
                 continue
 
@@ -227,6 +222,7 @@ def mostrar_resumen_ejecutivo():
 
 
 def main():
+    """Punto de entrada CLI del pipeline experimental y tabla maestra comparativa."""
     parser = argparse.ArgumentParser(
         description="Pipeline de Clasificación Supervisada en Texto Clínico (Corpus Reddit C-SSRS)."
     )

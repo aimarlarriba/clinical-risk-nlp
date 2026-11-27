@@ -24,11 +24,9 @@ from scipy.spatial.distance import cdist
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.decomposition import TruncatedSVD
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.feature_selection import SelectKBest, chi2
 from sklearn.metrics import cohen_kappa_score, f1_score
 from sklearn.model_selection import StratifiedKFold, cross_val_score
-from sklearn.preprocessing import StandardScaler, normalize
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC, LinearSVC
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -40,13 +38,13 @@ from src.metricas_clasificacion import (
     CLASES_ORDEN_CSSRS,
     GRID_C_LOGARITMICO,
     calibrar_umbral_en_dev,
+    cargar_particiones_y_tfidf,
     construir_espacio_hibrido,
     evaluar_predicciones_clinicas,
     perfilar_entrenamiento_e_inferencia,
     resumir_metricas_multirun,
     seleccionar_c_en_dev,
 )
-from src.modulo_comun_equipo import RUTA_CSV_DEFECTO, cargar_particion_oficial_equipo, limpiar_texto_reddit
 
 
 class OrdinalSVMClassifier:
@@ -71,6 +69,7 @@ class OrdinalSVMClassifier:
         self.clasificadores_: List[Any] = []
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "OrdinalSVMClassifier":
+        """Ajusta los K-1 clasificadores binarios calibrados P(y > k) sobre Train."""
         mapa_idx = {c: i for i, c in enumerate(self.clases_orden)}
         y_ord = np.array([mapa_idx[val] for val in y], dtype=int)
         self.clasificadores_ = []
@@ -90,6 +89,7 @@ class OrdinalSVMClassifier:
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """Estima probabilidades de clase ordinal mediante diferencias acumulativas acotadas."""
         n = X.shape[0]
         k_tot = len(self.clases_orden)
         p_mayor = np.column_stack([clf.predict_proba(X)[:, 1] for clf in self.clasificadores_])
@@ -105,6 +105,7 @@ class OrdinalSVMClassifier:
         return probs
 
     def predict(self, X: np.ndarray) -> np.ndarray:
+        """Asigna la etiqueta C-SSRS de mayor probabilidad ordinal estimada."""
         probs = self.predict_proba(X)
         return self.classes_[np.argmax(probs, axis=1)]
 
@@ -123,26 +124,22 @@ def _construir_hibrido_multiclase_l2(
     """
     Construye espacio híbrido con normalización L2 independiente por bloque y selección
     chi2 multiclase (sobre las 5 clases C-SSRS) ajustada exclusivamente en Train.
+
+    Justificación de hiperparámetros:
+        - `k_tfidf=200` (~40 términos por clase en promedio sobre K=5 categorías ordinales).
+        - `peso_tfidf=0.5` acota la contribución relativa del bloque léxico unitario frente
+          a las representaciones densas normalizadas L2 antes de la renormalización conjunta.
     """
-    X_mb_tr_n = normalize(X_mb_tr, norm="l2")
-    X_mb_dev_n = normalize(X_mb_dev, norm="l2")
-    X_mb_te_n = normalize(X_mb_te, norm="l2")
-
-    vec = TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_df=0.8, sublinear_tf=True)
-    X_tf_tr = vec.fit_transform(textos_tr)
-    X_tf_dev = vec.transform(textos_dev)
-    X_tf_te = vec.transform(textos_te)
-
-    k_ef = min(k_tfidf, X_tf_tr.shape[1])
-    sel = SelectKBest(chi2, k=k_ef)
-    X_sel_tr = normalize(sel.fit_transform(X_tf_tr, y_tr).toarray(), norm="l2")
-    X_sel_dev = normalize(sel.transform(X_tf_dev).toarray(), norm="l2")
-    X_sel_te = normalize(sel.transform(X_tf_te).toarray(), norm="l2")
-
-    X_tr = normalize(np.hstack([X_mb_tr_n, X_sel_tr * peso_tfidf]), norm="l2")
-    X_dev = normalize(np.hstack([X_mb_dev_n, X_sel_dev * peso_tfidf]), norm="l2")
-    X_te = normalize(np.hstack([X_mb_te_n, X_sel_te * peso_tfidf]), norm="l2")
-    return X_tr, X_dev, X_te
+    return construir_espacio_hibrido(
+        X_mb_tr, X_mb_dev, X_mb_te,
+        textos_tr, textos_dev, textos_te,
+        y_tr,
+        k_tfidf=k_tfidf,
+        alpha=peso_tfidf,
+        solo_tfidf=False,
+        objetivo_chi2="multiclase",
+        normalizar_l2=True,
+    )
 
 
 def _seleccionar_rbf_cv_train(
@@ -152,7 +149,9 @@ def _seleccionar_rbf_cv_train(
 ) -> Tuple[float, Any]:
     """
     Selecciona (C*, gamma*) para SVC(kernel='rbf') mediante validación cruzada
-    estratificada 5-fold exclusivamente sobre Train sobre rejilla logarítmica.
+    estratificada 3-fold exclusivamente sobre Train sobre subrejilla logarítmica base 10:
+    C in {10^-0.5, 10^0, 10^0.5} y gamma in {'scale', 10^-2, 10^-1}.
+    Se fija k=3 pliegues para preservar ~10 instancias positivas de 'Attempt' (n=31) por pliegue.
     """
     skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=seed)
     mejor_sc = -1.0
@@ -200,18 +199,11 @@ def ejecutar_experimento_mejoras(semillas: List[int] = [42, 43, 44, 45, 46]) -> 
     extractor = MentalBertHierarchicalExtractor()
     rep_dict = extractor.obtener_o_generar_representaciones()
 
-    df_raw = pd.read_csv(RUTA_CSV_DEFECTO)
-    textos_raw = np.array(df_raw["Post"].fillna("").apply(limpiar_texto_reddit).tolist())
-
-    particiones = {}
-    for s in semillas:
-        p = cargar_particion_oficial_equipo(seed=s)
-        particiones[s] = {
-            "tr": (p["idx"][0], p["y"][0]),
-            "dev": (p["idx"][1], p["y"][1]),
-            "te": (p["idx"][2], p["y"][2]),
-            "X384": p["X_384"],
-        }
+    particiones, textos_raw, _ = cargar_particiones_y_tfidf(
+        semillas=semillas,
+        incluir_x384=True,
+        precalcular_tfidf=False,
+    )
 
     nombre_attempt = "Attempt"
     print("=" * 120)
@@ -251,7 +243,10 @@ def ejecutar_experimento_mejoras(semillas: List[int] = [42, 43, 44, 45, 46]) -> 
                     X384_tr, X384_dev, X384_te = particiones[s]["X384"]
                     clust = AgglomerativeClustering(n_clusters=5, linkage="ward")
                     labels_tr = clust.fit_predict(X384_tr)
-                    centroides = np.array([X384_tr[labels_tr == k].mean(axis=0) for k in range(5)])
+                    centroides = np.array([
+                        X384_tr[labels_tr == k].mean(axis=0) if np.any(labels_tr == k) else np.zeros(X384_tr.shape[1])
+                        for k in range(5)
+                    ])
 
                     dist_tr = cdist(X384_tr, centroides, metric="euclidean")
                     dist_dev = cdist(X384_dev, centroides, metric="euclidean")
